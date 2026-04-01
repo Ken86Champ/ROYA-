@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import type { DashboardKPIs } from "@/lib/types/analytics";
 
 interface Stats {
   campaigns: {
@@ -56,10 +57,13 @@ const agentStatus = [
 
 export default function DashboardPage() {
   const [stats, setStats] = useState<Stats | null>(null);
+  const [perfKpis, setPerfKpis] = useState<DashboardKPIs | null>(null);
 
   useEffect(() => {
-    const load = () =>
+    const load = () => {
       fetch("/api/stats").then(r => r.json()).then(setStats).catch(() => {});
+      fetch("/api/dashboard/kpis").then(r => r.json()).then(setPerfKpis).catch(() => {});
+    };
     load();
     const t = setInterval(load, 8000);
     return () => clearInterval(t);
@@ -129,6 +133,28 @@ export default function DashboardPage() {
             <p className="text-slate-400 text-xs mt-0.5">{kpi.sub}</p>
           </Link>
         ))}
+      </div>
+
+      {/* Performance Rate Strip — sourced from experiment_events */}
+      <div className="glass-card px-6 py-4 mb-6 flex items-center gap-8 flex-wrap">
+        <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider shrink-0">Performance</span>
+        {[
+          { label: "Reply-Rate",          val: perfKpis?.avgReplyRate         ?? 0, color: "text-blue-600" },
+          { label: "Positive Reply-Rate", val: perfKpis?.avgPositiveReplyRate ?? 0, color: "text-violet-600" },
+          { label: "Booking-Rate",        val: perfKpis?.avgBookingRate       ?? 0, color: "text-emerald-600" },
+          { label: "Handoff-Rate",        val: perfKpis?.avgHandoffRate       ?? 0, color: "text-amber-600" },
+          { label: "Reaktivierung",       val: perfKpis?.reactivationRate     ?? 0, color: "text-cyan-600" },
+        ].map(r => (
+          <div key={r.label} className="flex items-center gap-2 min-w-0">
+            <span className={`text-lg font-bold ${r.color}`}>{r.val}%</span>
+            <span className="text-xs text-slate-400">{r.label}</span>
+          </div>
+        ))}
+        <div className="ml-auto flex items-center gap-4 text-xs text-slate-400">
+          <span><span className="font-semibold text-slate-700">{perfKpis?.totalSent ?? 0}</span> versendet</span>
+          <span><span className="font-semibold text-slate-700">{perfKpis?.totalReplies ?? 0}</span> geantwortet</span>
+          <span><span className="font-semibold text-slate-700">{perfKpis?.totalBookings ?? 0}</span> Termine</span>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">

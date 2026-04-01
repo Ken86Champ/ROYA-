@@ -9,6 +9,8 @@ const navItems = [
   { href: "/dashboard/clients", label: "Endkunden", icon: "◈" },
   { href: "/dashboard/campaigns", label: "Kampagnen", icon: "◎" },
   { href: "/dashboard/contacts", label: "Kontakte", icon: "◉" },
+  { href: "/dashboard/sms-test", label: "SMS Simulator", icon: "◈", highlight: true },
+  { href: "/dashboard/live-chat", label: "Live Chat", icon: "◉" },
   { href: "/dashboard/conversations", label: "Gespraeche", icon: "◊" },
   { href: "/dashboard/appointments", label: "Termine", icon: "◇" },
   { href: "/dashboard/settings", label: "Einstellungen", icon: "⚙" },

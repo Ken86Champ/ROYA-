@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import type { Campaign } from "@/lib/campaign-store";
 import type { VariationStats } from "@/lib/ab-store";
+import type { CampaignMetricsResponse } from "@/lib/types/analytics";
 
 const STATUS_STYLE: Record<string, { dot: string; label: string; badge: string }> = {
   draft:     { dot: "bg-slate-300",    label: "Entwurf",      badge: "bg-slate-100 text-slate-600 border-slate-200" },
@@ -33,6 +34,8 @@ export default function CampaignsPage() {
   const [sendResult, setSendResult] = useState<Record<string, { sent: number; skipped: number }>>({});
   const [abOpen, setAbOpen] = useState<string | null>(null);
   const [abStats, setAbStats] = useState<Record<string, VariationStats[]>>({});
+  const [kpiOpen, setKpiOpen] = useState<string | null>(null);
+  const [kpiData, setKpiData] = useState<Record<string, CampaignMetricsResponse>>({});
 
   const load = () =>
     fetch("/api/campaigns").then(r => r.json()).then(data => {
@@ -53,6 +56,16 @@ export default function CampaignsPage() {
       const res = await fetch(`/api/ab-stats?campaignId=${campId}`);
       const data = await res.json();
       setAbStats(prev => ({ ...prev, [campId]: data }));
+    }
+  };
+
+  const toggleKpi = async (campId: string) => {
+    if (kpiOpen === campId) { setKpiOpen(null); return; }
+    setKpiOpen(campId);
+    if (!kpiData[campId]) {
+      const res = await fetch(`/api/campaigns/${campId}/metrics`);
+      const data = await res.json();
+      setKpiData(prev => ({ ...prev, [campId]: data }));
     }
   };
 
@@ -253,11 +266,123 @@ export default function CampaignsPage() {
                       {i < camp.flow.length - 1 && <span className="text-slate-300 text-xs">→</span>}
                     </div>
                   ))}
-                  <button onClick={() => toggleAb(camp.id)}
-                    className="ml-auto text-[10px] text-violet-500 hover:text-violet-700 font-semibold transition-colors">
-                    {abOpen === camp.id ? "A/B ▲" : "A/B ▼"}
-                  </button>
+                  <div className="ml-auto flex items-center gap-3">
+                    <button onClick={() => toggleKpi(camp.id)}
+                      className="text-[10px] text-cyan-500 hover:text-cyan-700 font-semibold transition-colors">
+                      {kpiOpen === camp.id ? "KPI ▲" : "KPI ▼"}
+                    </button>
+                    <button onClick={() => toggleAb(camp.id)}
+                      className="text-[10px] text-violet-500 hover:text-violet-700 font-semibold transition-colors">
+                      {abOpen === camp.id ? "A/B ▲" : "A/B ▼"}
+                    </button>
+                  </div>
                 </div>
+
+                {/* KPI + Funnel Panel */}
+                {kpiOpen === camp.id && (
+                  <div className="mt-3 pt-3 border-t border-slate-100">
+                    <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider mb-3">KPI & Funnel</p>
+                    {!kpiData[camp.id] ? (
+                      <p className="text-xs text-slate-400">Lade…</p>
+                    ) : (() => {
+                      const d = kpiData[camp.id];
+                      const m = d.metrics;
+                      const f = d.funnel;
+                      const vs = d.variants;
+                      const fc = d.forecast;
+                      return (
+                        <div className="space-y-4">
+                          {/* Rate Pills */}
+                          {m.sent === 0 ? (
+                            <p className="text-xs text-slate-400">Noch keine Events — sende zuerst Nachrichten.</p>
+                          ) : (
+                            <>
+                              <div className="flex flex-wrap gap-2">
+                                {[
+                                  { label: "Reply-Rate",    val: m.replyRate,         color: "bg-blue-50 text-blue-700 border-blue-200" },
+                                  { label: "Positiv",       val: m.positiveReplyRate, color: "bg-violet-50 text-violet-700 border-violet-200" },
+                                  { label: "Qualified",     val: m.qualifiedRate,     color: "bg-amber-50 text-amber-700 border-amber-200" },
+                                  { label: "Booking",       val: m.bookingRate,       color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+                                  { label: "Handoff",       val: m.handoffRate,       color: "bg-red-50 text-red-600 border-red-200" },
+                                  { label: "Reaktivierung", val: m.reactivationRate,  color: "bg-cyan-50 text-cyan-700 border-cyan-200" },
+                                ].map(r => (
+                                  <span key={r.label} className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border ${r.color}`}>
+                                    {r.val}% {r.label}
+                                  </span>
+                                ))}
+                              </div>
+
+                              {/* Funnel */}
+                              <div className="space-y-1.5">
+                                {f.steps.map((step, i) => (
+                                  <div key={step.label} className="flex items-center gap-2">
+                                    <span className="text-[11px] text-slate-500 w-24 shrink-0">{step.label}</span>
+                                    <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                                      <div className={`h-full rounded-full transition-all ${
+                                        i === 0 ? "bg-violet-400" :
+                                        i === 1 ? "bg-blue-400" :
+                                        i === 2 ? "bg-cyan-400" :
+                                        i === 3 ? "bg-amber-400" : "bg-emerald-500"
+                                      }`} style={{ width: `${step.pctOfSent}%` }} />
+                                    </div>
+                                    <span className="text-[11px] font-bold text-slate-700 w-8 text-right">{step.count}</span>
+                                    <span className="text-[10px] text-slate-400 w-10 text-right">{step.pctOfSent}%</span>
+                                  </div>
+                                ))}
+                              </div>
+
+                              {/* Variants (if any) */}
+                              {vs.length > 0 && (
+                                <div>
+                                  <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider mb-2">Varianten</p>
+                                  <div className="space-y-1.5">
+                                    {vs.map(v => (
+                                      <div key={v.variantKey} className={`flex items-center gap-3 px-3 py-2 rounded-xl text-xs border ${
+                                        v.isTopPerformer ? "bg-emerald-50 border-emerald-200" : "bg-slate-50 border-slate-100"
+                                      }`}>
+                                        <span className="font-semibold text-slate-700 w-24 truncate">{v.variantKey}</span>
+                                        <span className="text-slate-400">{v.sent} gesendet</span>
+                                        <span className={`font-bold ${v.isTopPerformer ? "text-emerald-600" : "text-slate-700"}`}>
+                                          {v.replyRate}% Reply
+                                        </span>
+                                        <span className="text-slate-400">{v.bookingRate}% Booking</span>
+                                        {v.isTopPerformer && (
+                                          <span className="ml-auto text-[9px] bg-emerald-500 text-white px-1.5 py-0.5 rounded-full font-bold">TOP</span>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Forecast */}
+                              {fc.targetLeads > 0 && (
+                                <div className="pt-2 border-t border-slate-100">
+                                  <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider mb-2">
+                                    Forecast ({fc.targetLeads} Leads)
+                                  </p>
+                                  <div className="flex gap-4 flex-wrap text-xs">
+                                    {[
+                                      { label: "Erwartete Antworten",  val: fc.expectedReplies },
+                                      { label: "Positiv",              val: fc.expectedPositiveReplies },
+                                      { label: "Termine",              val: fc.expectedBookings },
+                                      { label: "Abschlüsse",           val: fc.expectedDeals },
+                                    ].map(r => (
+                                      <div key={r.label} className="text-center">
+                                        <p className="text-base font-bold text-slate-800">{r.val}</p>
+                                        <p className="text-slate-400 text-[10px]">{r.label}</p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
 
                 {/* A/B Results Panel */}
                 {abOpen === camp.id && (

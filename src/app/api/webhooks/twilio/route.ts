@@ -1,132 +1,117 @@
-import { NextRequest, NextResponse } from "next/server";
-import * as store from "@/lib/conversation-store";
-import { classifyIntent } from "@/lib/intent-classifier";
-import * as rateLimiter from "@/lib/rate-limiter";
-import * as abStore from "@/lib/ab-store";
-import { notifyHandoff } from "@/lib/notify";
-import { enqueueReminder } from "@/lib/queue";
+/**
+ * POST /api/webhooks/twilio
+ *
+ * Entry point for all incoming SMS and WhatsApp messages.
+ * Routes every message through the V2 Conversation Orchestrator.
+ */
 
-async function sendTwilioReply(to: string, body: string, channel: store.Channel) {
+import { NextRequest, NextResponse } from 'next/server';
+import { runConversationTurn } from '@/lib/conversation/orchestrator';
+import {
+  validateTwilioSignature,
+  extractTwilioParams,
+} from '@/lib/compliance/webhook-signature';
+import { DEFAULT_PERSONA } from '@/lib/types/conversation';
+
+const TWIML_EMPTY = "<?xml version='1.0' encoding='UTF-8'?><Response></Response>";
+const STOP_KEYWORDS = [
+  'stop', 'stopp', 'unsubscribe', 'abmelden', 'aufhören', 'aufhoeren',
+  'kein interesse', 'bitte nicht mehr', 'no more', 'remove me', 'opt out',
+  'optout', 'cancel', 'abbestellen',
+];
+
+function ok(): NextResponse {
+  return new NextResponse(TWIML_EMPTY, { headers: { 'Content-Type': 'text/xml' } });
+}
+
+async function sendTwilioMessage(
+  to: string,
+  body: string,
+  channel: 'sms' | 'whatsapp',
+): Promise<void> {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken  = process.env.TWILIO_AUTH_TOKEN;
   const from       = process.env.TWILIO_FROM_NUMBER;
   if (!accountSid || !authToken || !from) return;
 
   const params = new URLSearchParams();
-  params.append("To",   channel === "whatsapp" ? `whatsapp:${to}` : to);
-  params.append("From", channel === "whatsapp" ? `whatsapp:${from}` : from);
-  params.append("Body", body);
+  params.append('To',   channel === 'whatsapp' ? `whatsapp:${to}` : to);
+  params.append('From', channel === 'whatsapp' ? `whatsapp:${from}` : from);
+  params.append('Body', body);
 
-  await fetch(`https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`, {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`,
-      "Content-Type": "application/x-www-form-urlencoded",
+  const res = await fetch(
+    `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString('base64')}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: params.toString(),
     },
-    body: params.toString(),
-  });
+  );
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    console.error('[ROYA] Twilio send error:', res.status, err);
+  }
 }
 
-const TWIML_EMPTY = "<?xml version='1.0' encoding='UTF-8'?><Response></Response>";
-
-export async function POST(req: NextRequest) {
+export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
-    const body    = await req.formData();
-    const from    = (body.get("From") as string) || "";
-    const msgBody = (body.get("Body") as string) || "";
+    const formData = await req.formData();
+    const params   = extractTwilioParams(formData);
 
-    const channel: store.Channel = from.startsWith("whatsapp:") ? "whatsapp" : "sms";
-    const contact = from.replace("whatsapp:", "");
+    const from    = params['From'] || '';
+    const msgBody = (params['Body'] || '').trim();
+    const channel: 'sms' | 'whatsapp' = from.startsWith('whatsapp:') ? 'whatsapp' : 'sms';
+    const contact = from.replace('whatsapp:', '');
 
-    if (!contact || !msgBody) {
-      return new NextResponse(TWIML_EMPTY, { headers: { "Content-Type": "text/xml" } });
-    }
+    if (!contact || !msgBody) return ok();
 
-    // STOP / opt-out
-    if (rateLimiter.isStopKeyword(msgBody)) {
-      await rateLimiter.optOut(contact);
-      await sendTwilioReply(contact, "Du wurdest abgemeldet. Du erhältst keine weiteren Nachrichten.", channel);
-      return new NextResponse(TWIML_EMPTY, { headers: { "Content-Type": "text/xml" } });
-    }
+    // ── Signature validation (non-blocking in dev, enforced in prod) ──────
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    const isDev     = process.env.NODE_ENV === 'development';
+    if (authToken && !isDev) {
+      const twilioSig = req.headers.get('x-twilio-signature') || '';
+      const baseUrl   = process.env.NEXT_PUBLIC_BASE_URL || '';
+      const webhookUrl = `${baseUrl}/api/webhooks/twilio`;
 
-    // Find or create conversation (Supabase optional — falls back to stateless)
-    let conv: store.Conversation | null = null;
-    try {
-      conv = await store.findByContact(contact);
-      if (!conv) {
-        conv = await store.create({ leadName: contact, leadContact: contact, channel });
+      if (twilioSig && !validateTwilioSignature(authToken, twilioSig, webhookUrl, params)) {
+        console.warn('[ROYA] Invalid Twilio signature from:', contact);
+        return new NextResponse('Forbidden', { status: 403 });
       }
-      await store.addMessage(conv.id, "lead", msgBody, channel);
-      if (conv.campaignId) {
-        await abStore.recordReply(contact, conv.campaignId).catch(() => {});
-      }
-    } catch {
-      // Supabase unavailable — create minimal in-memory conversation for this request
-      const now = new Date().toISOString();
-      conv = {
-        id: `tmp_${Date.now()}`, leadName: contact, leadContact: contact,
-        channel, messages: [], state: "active", flowNode: "opener",
-        lastActivity: now, sentiment: "neutral", consecutiveQuestions: 0, createdAt: now,
-      };
     }
 
-    // Intent classification + auto-reply (always runs)
-    try {
-      const result = await classifyIntent({
-        leadName:      conv.leadName,
+    // ── Opt-out check ─────────────────────────────────────────────────────
+    const msgLower = msgBody.toLowerCase();
+    if (STOP_KEYWORDS.some(kw => msgLower.includes(kw))) {
+      await sendTwilioMessage(
+        contact,
+        'Du wurdest abgemeldet und erhältst keine weiteren Nachrichten.',
         channel,
-        history:       conv.messages.slice(0, -1),
-        latestMessage: msgBody,
-      });
-
-      // Try to persist intent (non-fatal)
-      const applied = await store.applyIntent(conv.id, result).catch(() => result);
-
-      // Human handoff notification
-      if (
-        applied.nextAction === "human_handoff" ||
-        applied.confidence < 70 ||
-        applied.sentiment === "negative"
-      ) {
-        await notifyHandoff({
-          convId:           conv.id,
-          leadName:         conv.leadName,
-          leadContact:      contact,
-          channel,
-          reason:           applied.nextAction === "human_handoff"
-            ? applied.reasoning.includes("Auto-escalation") ? "repeated_question" : "human_requested"
-            : applied.sentiment === "negative" ? "frustrated" : "low_confidence",
-          lastMessage:      msgBody,
-          suggestedResponse: applied.suggestedResponse,
-          confidence:       applied.confidence,
-        }).catch(() => {});
-      }
-
-      // Auto-reply
-      if (
-        applied.confidence >= 65 &&
-        (applied.nextAction === "reply" || applied.nextAction === "book") &&
-        applied.suggestedResponse
-      ) {
-        await sendTwilioReply(contact, applied.suggestedResponse, channel);
-        await store.addMessage(conv.id, "agent", applied.suggestedResponse, channel).catch(() => {});
-      }
-
-      // Schedule booking reminder (non-fatal)
-      if (applied.nextAction === "book") {
-        const reminderAt = new Date(Date.now() + 23 * 3600 * 1000);
-        await enqueueReminder(
-          { convId: conv.id, contact, channel, leadName: conv.leadName, appointmentAt: reminderAt.toISOString() },
-          reminderAt.getTime() - Date.now()
-        ).catch(() => {});
-      }
-    } catch (classifyErr) {
-      console.error("[ROYA] Intent classification failed:", classifyErr);
+      );
+      return ok();
     }
 
-    return new NextResponse(TWIML_EMPTY, { headers: { "Content-Type": "text/xml" } });
+    // ── Run V2 Orchestrator ───────────────────────────────────────────────
+    const result = await runConversationTurn({
+      conversationId: `twilio_${contact}`,  // stable ID per contact
+      leadName:       contact,              // will be overridden if lead found in DB
+      channel,
+      incomingMessage: msgBody,
+      leadContact:     contact,
+      business:        DEFAULT_PERSONA,     // TODO: load from agency/client config
+    });
+
+    // ── Send reply ────────────────────────────────────────────────────────
+    if (result.action === 'reply' && result.reply) {
+      await sendTwilioMessage(contact, result.reply, channel);
+    }
+
+    return ok();
   } catch (err) {
-    console.error("Twilio webhook error:", err);
-    return NextResponse.json({ error: "Internal error" }, { status: 500 });
+    console.error('[ROYA] Webhook error:', err);
+    return ok(); // Always return 200 to Twilio to prevent retries
   }
 }
