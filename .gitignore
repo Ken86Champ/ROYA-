@@ -4,3 +4,5 @@ roya-settings.json
 node_modules/
 .next/
 dist/
+
+.vercel
