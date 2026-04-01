@@ -49,19 +49,28 @@ export async function POST(req: NextRequest) {
       return new NextResponse(TWIML_EMPTY, { headers: { "Content-Type": "text/xml" } });
     }
 
-    // Find or create conversation
-    let conv = await store.findByContact(contact);
-    if (!conv) {
-      conv = await store.create({ leadName: contact, leadContact: contact, channel });
+    // Find or create conversation (Supabase optional — falls back to stateless)
+    let conv: store.Conversation | null = null;
+    try {
+      conv = await store.findByContact(contact);
+      if (!conv) {
+        conv = await store.create({ leadName: contact, leadContact: contact, channel });
+      }
+      await store.addMessage(conv.id, "lead", msgBody, channel);
+      if (conv.campaignId) {
+        await abStore.recordReply(contact, conv.campaignId).catch(() => {});
+      }
+    } catch {
+      // Supabase unavailable — create minimal in-memory conversation for this request
+      const now = new Date().toISOString();
+      conv = {
+        id: `tmp_${Date.now()}`, leadName: contact, leadContact: contact,
+        channel, messages: [], state: "active", flowNode: "opener",
+        lastActivity: now, sentiment: "neutral", consecutiveQuestions: 0, createdAt: now,
+      };
     }
 
-    await store.addMessage(conv.id, "lead", msgBody, channel);
-
-    if (conv.campaignId) {
-      await abStore.recordReply(contact, conv.campaignId);
-    }
-
-    // Intent classification
+    // Intent classification + auto-reply (always runs)
     try {
       const result = await classifyIntent({
         leadName:      conv.leadName,
@@ -70,7 +79,8 @@ export async function POST(req: NextRequest) {
         latestMessage: msgBody,
       });
 
-      const applied = await store.applyIntent(conv.id, result);
+      // Try to persist intent (non-fatal)
+      const applied = await store.applyIntent(conv.id, result).catch(() => result);
 
       // Human handoff notification
       if (
@@ -89,7 +99,7 @@ export async function POST(req: NextRequest) {
           lastMessage:      msgBody,
           suggestedResponse: applied.suggestedResponse,
           confidence:       applied.confidence,
-        });
+        }).catch(() => {});
       }
 
       // Auto-reply
@@ -99,23 +109,16 @@ export async function POST(req: NextRequest) {
         applied.suggestedResponse
       ) {
         await sendTwilioReply(contact, applied.suggestedResponse, channel);
-        await store.addMessage(conv.id, "agent", applied.suggestedResponse, channel);
+        await store.addMessage(conv.id, "agent", applied.suggestedResponse, channel).catch(() => {});
       }
 
-      // Schedule booking reminder (24h before appointment)
+      // Schedule booking reminder (non-fatal)
       if (applied.nextAction === "book") {
-        const reminderAt = new Date(Date.now() + 23 * 3600 * 1000);  // ~24h from now
-        const delayMs    = reminderAt.getTime() - Date.now();
+        const reminderAt = new Date(Date.now() + 23 * 3600 * 1000);
         await enqueueReminder(
-          {
-            convId:        conv.id,
-            contact,
-            channel,
-            leadName:      conv.leadName,
-            appointmentAt: reminderAt.toISOString(),
-          },
-          delayMs
-        ).catch(() => {});  // non-fatal if Redis unavailable
+          { convId: conv.id, contact, channel, leadName: conv.leadName, appointmentAt: reminderAt.toISOString() },
+          reminderAt.getTime() - Date.now()
+        ).catch(() => {});
       }
     } catch (classifyErr) {
       console.error("[ROYA] Intent classification failed:", classifyErr);
