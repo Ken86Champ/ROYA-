@@ -823,6 +823,9 @@ export type ContinuationType =
   | "now_interested"
   | "still_unsure"
   | "not_relevant_after_all"
+  // After timing/unsure — round 2
+  | "reconsidered_now"
+  | "confirms_followup_later"
   // After already_solved
   | "open_to_compare"
   | "satisfied_stays"
@@ -893,12 +896,20 @@ export function getContinuationOptions(
       { type: "objects_competitor",   label: "Konkurrenzvergleich",      example: `"Wir schauen uns gerade auch noch andere Anbieter an."`,   color: "text-purple-700",  bg: "bg-purple-50",  border: "border-purple-200" },
     ];
   }
-  if (state === "neutral") {
+  if (state === "neutral" && round <= 1) {
     return [
       { type: "now_interested",         label: "Jetzt interessiert",   example: `"Ah, das klingt tatsächlich relevant für uns."`,  color: "text-emerald-700", bg: "bg-emerald-50", border: "border-emerald-200" },
-      { type: "still_unsure",           label: "Weiterhin unsicher",   example: `"Hmm, ich weiss noch nicht... vielleicht."`,      color: "text-amber-700",  bg: "bg-amber-50",   border: "border-amber-200" },
+      { type: "still_unsure",           label: "Weiterhin unsicher",   example: `"Hmm, ich habe gerade so viel auf dem Tisch..."`, color: "text-amber-700",  bg: "bg-amber-50",   border: "border-amber-200" },
       { type: "objects_price",          label: "Preiseinwand",         example: `"Das klingt interessant, aber zu teuer für uns."`, color: "text-orange-700", bg: "bg-orange-50",  border: "border-orange-200" },
       { type: "not_relevant_after_all", label: "Doch kein Interesse",  example: `"Nein, das ist bei uns wirklich kein Thema."`,    color: "text-red-700",    bg: "bg-red-50",     border: "border-red-200" },
+    ];
+  }
+  // Round 2 for neutral — after timing/unsure agent response asking for follow-up permission
+  if (state === "neutral" && round >= 2) {
+    return [
+      { type: "reconsidered_now",        label: "Doch jetzt interessiert", example: `"Eigentlich – lassen Sie mich das kurz machen, jetzt bin ich neugierig."`, color: "text-emerald-700", bg: "bg-emerald-50", border: "border-emerald-200" },
+      { type: "confirms_followup_later", label: "Bestätigt Follow-up",     example: `"Ja, melden Sie sich in 4 Wochen, das passt."`,                            color: "text-blue-700",    bg: "bg-blue-50",    border: "border-blue-200" },
+      { type: "not_relevant_after_all",  label: "Kein Interesse",           example: `"Nein, das wird sich auch in 4 Wochen nicht ändern."`,                    color: "text-red-700",     bg: "bg-red-50",     border: "border-red-200" },
     ];
   }
   if (state === "already_solved") {
@@ -1012,15 +1023,16 @@ export function generateContinuationExchange(
       return {
         leadText: `Ich weiss noch nicht... es klingt interessant, aber ich habe gerade so viel auf dem Tisch. Vielleicht später?`,
         agentMsg: short
-          ? `Verstehe ${p.firstName}. Darf ich mich in 4 Wochen nochmals melden? Einfach kurz bestätigen.`
-          : `Das verstehe ich vollständig, ${p.firstName}.\n\nKein Druck von meiner Seite. Darf ich mich in etwa 4 Wochen kurz nochmals melden – wenn sich der Staub etwas gelegt hat?\n\nFalls sich in der Zwischenzeit etwas ändert, können Sie jederzeit direkt auf mich zukommen:\n\n${ctx.bookingLink}\n\nAlles Gute bis dahin,\n${ctx.agentName}`,
+          ? `Verstehe ${p.firstName}. Kein Druck! Darf ich mich in 4 Wochen kurz melden – passt das grundsätzlich?`
+          : `Das verstehe ich vollständig, ${p.firstName} – und ich respektiere das.\n\nKein Druck von meiner Seite. Darf ich mich in etwa 4 Wochen kurz nochmals melden – wenn sich der Staub etwas gelegt hat?\n\nFalls sich in der Zwischenzeit etwas ändert, können Sie jederzeit direkt auf mich zukommen:\n\n${ctx.bookingLink}\n\nEinfach kurz bestätigen reicht.`,
         agentLabel: "Timing respektieren",
         agentThinking: [
-          { phase: "Timing-Problem", content: "Lead hat Interesse, aber zu beschäftigt. Kein Druck — Follow-up in 4 Wochen vereinbaren.", highlight: true },
+          { phase: "Timing-Problem", content: "Lead hat Interesse, aber zu beschäftigt. Kein Druck — Follow-up in 4 Wochen anfragen. Warte auf Bestätigung.", highlight: true },
+          { phase: "Strategie", content: "Nicht schliessen — Lead hat kein Nein gesagt. Follow-up-Erlaubnis einholen und auf Antwort warten." },
         ],
-        nextState: "closed",
+        nextState: "neutral",
         triggerBooking: false,
-        closeConversation: true,
+        closeConversation: false,
       };
 
     case "not_relevant_after_all":
@@ -1272,9 +1284,9 @@ export function generateContinuationExchange(
           { phase: "Strategie", content: "Frage nach dem konkreten Auslöser: Was ändert sich wann? So bekommt man einen echten Nachfasstermin — kein leeres 'melde ich mich später'." },
           { phase: "Nächster Schritt", content: "Konkrete Zeitangabe einholen (z.B. +6 Wochen). Dann: snoozen und zum vereinbarten Datum erneut kontaktieren." },
         ],
-        nextState: "closed",
+        nextState: "neutral",
         triggerBooking: false,
-        closeConversation: true,
+        closeConversation: false,
       };
 
     case "objects_trust":
@@ -1309,6 +1321,38 @@ export function generateContinuationExchange(
         nextState: "interested",
         triggerBooking: false,
         closeConversation: false,
+      };
+
+    case "reconsidered_now":
+      return {
+        leadText: `Eigentlich – lassen Sie mich das doch kurz machen. Jetzt bin ich neugierig, was das konkret bedeuten würde.`,
+        agentMsg: short
+          ? `Das freut mich ${p.firstName}! Bevor ich erkläre: Was wäre die grösste Verbesserung für Sie${co} beim Thema ${ctx.painPoint}?`
+          : `Das freut mich wirklich, ${p.firstName}!\n\nBevor ich Ihnen erkläre, was konkret auf dem Tisch liegt – ich möchte sicherstellen, dass das Gespräch für Sie wirklich relevant ist.\n\nEine kurze Frage: Was wäre für ${p.company || "Ihr Team"} beim Thema ${ctx.painPoint} die grösste Verbesserung, die Sie sich konkret wünschen würden?\n\nDann kann ich Ihnen genau zeigen, ob und wie wir das liefern können.`,
+        agentLabel: "Spontane Öffnung nutzen",
+        agentThinking: [
+          { phase: "Unerwartete Kehrtwende", content: "Lead hat Timing-Einwand gegeben, überlegt aber jetzt doch spontan. Kaufbereitschaft vorhanden — aber jetzt nicht pitchen, sondern kurz qualifizieren.", highlight: true },
+          { phase: "Strategie", content: "Offenheit bestätigen → eine Discovery-Frage → dann CTA. Lead hat signalisiert: 'Überzeug mich jetzt' — das ist der Moment." },
+        ],
+        nextState: "interested",
+        triggerBooking: false,
+        closeConversation: false,
+      };
+
+    case "confirms_followup_later":
+      return {
+        leadText: `Ja, das passt. Melden Sie sich in 4 Wochen, dann haben wir mehr Luft.`,
+        agentMsg: short
+          ? `Perfekt ${p.firstName}, das mache ich! Ich trage das ein und melde mich Ende ${new Date(Date.now() + 28*86400000).toLocaleDateString("de-CH", {month:"long"})}. Bis dann!`
+          : `Perfekt, ${p.firstName} – das schätze ich sehr!\n\nIch trage das in meinen Kalender ein und melde mich Ende ${new Date(Date.now() + 28*86400000).toLocaleDateString("de-CH", {month:"long"})} kurz bei Ihnen.\n\nFalls sich vorher etwas ändert und Sie früher sprechen möchten – hier können Sie direkt einen Termin buchen:\n\n${ctx.bookingLink}\n\nBis bald und alles Gute in der Zwischenzeit,\n${ctx.agentName}`,
+        agentLabel: "Follow-up bestätigt",
+        agentThinking: [
+          { phase: "Follow-up vereinbart", content: "Lead bestätigt Follow-up in 4 Wochen. Konversation sauber abschliessen — Datum festhalten, Booking-Link als Fallback mitgeben.", highlight: true },
+          { phase: "Ergebnis", content: "Kein Termin heute, aber klares Follow-up-Datum. Lead bleibt warm. Snooze in 28 Tagen setzen." },
+        ],
+        nextState: "closed",
+        triggerBooking: false,
+        closeConversation: true,
       };
 
     default:

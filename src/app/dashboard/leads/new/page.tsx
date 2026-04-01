@@ -215,12 +215,9 @@ export default function LeadsNewPage() {
       return;
     }
     // SMS / WhatsApp via Twilio API route
+    // Credentials from localStorage (Settings page) — server falls back to env vars if empty
     let twilio = { accountSid: "", authToken: "", from: "" };
     try { twilio = JSON.parse(localStorage.getItem("roya_twilio") || "{}"); } catch {}
-    if (!twilio.accountSid || !twilio.authToken || !twilio.from) {
-      setTestError("Twilio-Zugangsdaten fehlen. Bitte in den Einstellungen konfigurieren.");
-      return;
-    }
     setTestSending(true);
     try {
       const res = await fetch("/api/test-send", {
@@ -228,11 +225,13 @@ export default function LeadsNewPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ channel, to: testTarget, body: testModal.message, ...twilio }),
       });
-      const data = await res.json();
-      if (!res.ok) { setTestError(data.error || "Fehler beim Senden."); }
+      let data: { error?: string; success?: boolean } = {};
+      try { data = await res.json(); } catch {}
+      if (!res.ok) { setTestError(data.error || `Fehler beim Senden (${res.status}).`); }
       else { setTestSent(true); }
-    } catch {
-      setTestError("Netzwerkfehler. Bitte erneut versuchen.");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "";
+      setTestError(msg ? `Fehler: ${msg}` : "Netzwerkfehler. Bitte erneut versuchen.");
     } finally {
       setTestSending(false);
     }

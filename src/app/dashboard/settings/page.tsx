@@ -112,16 +112,36 @@ export default function SettingsPage() {
 
   useEffect(() => {
     setConnected(loadCalendars());
-    const t = loadTwilio();
-    setTwilio(t);
-    try {
-      setClaudeKey(localStorage.getItem("roya_claude_key") || "");
-      setSupabaseUrl(localStorage.getItem("roya_supabase_url") || "");
-      setSupabaseKey(localStorage.getItem("roya_supabase_key") || "");
-      setMailgunKey(localStorage.getItem("roya_mailgun_key") || "");
-      setMailgunDomain(localStorage.getItem("roya_mailgun_domain") || "");
-      setMailgunFrom(localStorage.getItem("roya_mailgun_from") || "");
-    } catch {}
+    // Load from server-persisted settings (falls back to env vars)
+    fetch("/api/settings").then(r => r.json()).then(s => {
+      setTwilio({ accountSid: s.twilioAccountSid || "", authToken: s.twilioAuthToken || "", from: s.twilioFrom || "" });
+      setClaudeKey(s.claudeKey || "");
+      setSupabaseUrl(s.supabaseUrl || "");
+      setSupabaseKey(s.supabaseKey || "");
+      setMailgunKey(s.mailgunKey || "");
+      setMailgunDomain(s.mailgunDomain || "");
+      setMailgunFrom(s.mailgunFrom || "");
+      // Also sync to localStorage for other pages that still read from it
+      try {
+        if (s.twilioAccountSid) localStorage.setItem("roya_twilio", JSON.stringify({ accountSid: s.twilioAccountSid, authToken: s.twilioAuthToken, from: s.twilioFrom }));
+        if (s.claudeKey) localStorage.setItem("roya_claude_key", s.claudeKey);
+        if (s.mailgunKey) localStorage.setItem("roya_mailgun_key", s.mailgunKey);
+        if (s.mailgunDomain) localStorage.setItem("roya_mailgun_domain", s.mailgunDomain);
+        if (s.mailgunFrom) localStorage.setItem("roya_mailgun_from", s.mailgunFrom);
+      } catch {}
+    }).catch(() => {
+      // Fallback to localStorage if API unavailable
+      const t = loadTwilio();
+      setTwilio(t);
+      try {
+        setClaudeKey(localStorage.getItem("roya_claude_key") || "");
+        setSupabaseUrl(localStorage.getItem("roya_supabase_url") || "");
+        setSupabaseKey(localStorage.getItem("roya_supabase_key") || "");
+        setMailgunKey(localStorage.getItem("roya_mailgun_key") || "");
+        setMailgunDomain(localStorage.getItem("roya_mailgun_domain") || "");
+        setMailgunFrom(localStorage.getItem("roya_mailgun_from") || "");
+      } catch {}
+    });
     loadStatus();
   }, [loadStatus]);
 
@@ -161,12 +181,30 @@ export default function SettingsPage() {
     saveCalendars(updated);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    const payload = {
+      twilioAccountSid: twilio.accountSid,
+      twilioAuthToken:  twilio.authToken,
+      twilioFrom:       twilio.from,
+      claudeKey,
+      supabaseUrl,
+      supabaseKey,
+      mailgunKey,
+      mailgunDomain,
+      mailgunFrom,
+    };
+    // Save to server (persistent across browser resets)
+    await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }).catch(() => {});
+    // Also sync to localStorage for other pages
     try {
+      saveTwilio(twilio);
       if (claudeKey) localStorage.setItem("roya_claude_key", claudeKey);
       if (supabaseUrl) localStorage.setItem("roya_supabase_url", supabaseUrl);
       if (supabaseKey) localStorage.setItem("roya_supabase_key", supabaseKey);
-      saveTwilio(twilio);
       if (mailgunKey) localStorage.setItem("roya_mailgun_key", mailgunKey);
       if (mailgunDomain) localStorage.setItem("roya_mailgun_domain", mailgunDomain);
       if (mailgunFrom) localStorage.setItem("roya_mailgun_from", mailgunFrom);
