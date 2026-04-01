@@ -35,6 +35,8 @@ export interface BusinessContext {
   noConvertReason: string;
   ctaGoal: string;
   bookingLink: string;
+  leadType?: "b2b" | "b2c";   // b2c = emotion/identity/convenience, shorter messages, shame-removal tone
+  industry?: string;           // e.g. "Fitness", "Dental", "Coaching" — personalises B2C copy
 }
 
 export const DEFAULT_CONTEXT: BusinessContext = {
@@ -48,6 +50,7 @@ export const DEFAULT_CONTEXT: BusinessContext = {
   noConvertReason: "Timing, Budget oder interner Entscheidungsprozess",
   ctaGoal: "20-minütiges Demo-Gespräch buchen",
   bookingLink: "https://cal.com/roya/demo",
+  leadType: "b2b",
 };
 
 export interface LeadProfile {
@@ -290,7 +293,77 @@ export function generateInitialMessages(
   const since = timeSince(p.daysSinceContact);
   const co = p.company ? ` bei ${p.company}` : "";
   const role = p.jobTitle ? ` als ${p.jobTitle}` : "";
+  const isB2C = ctx.leadType === "b2c";
+  const industryCtx = ctx.industry ? ` (${ctx.industry})` : "";
 
+  // ── B2C VARIANTS ─────────────────────────────────────────────────────────────
+  // B2C = shorter, emotional, shame-removal tone, no company/title references
+  if (isB2C) {
+    if (channel === "email") {
+      return [
+        {
+          id: "v1",
+          label: "Persönlich & warmherzig",
+          subject: `${p.firstName}, kurze Frage – bist du noch dabei?`,
+          body: `Hallo ${p.firstName},\n\nmein Name ist ${ctx.agentName} von ${ctx.companyName}.\n\nIch melde mich, weil du dich vor ${since} für ${ctx.product}${industryCtx} interessiert hast – und ich ehrlich gesagt neugierig bin, wie es dir seither gegangen ist.\n\nHast du das Thema inzwischen in Angriff genommen – oder ist es irgendwie liegen geblieben?\n\nGanz ohne Druck – ich frage nur, weil ich weiss, wie leicht so etwas im Alltag untergeht.\n\nViele Grüsse,\n${ctx.agentName}`,
+          tone: "warm, empathisch, schuldfreiend",
+          score: p.segment === "hot" ? 90 : p.segment === "warm" ? 84 : 72,
+          reasoning: "B2C: Kein Unternehmenskontext. Persönliche Ansprache mit Shame-Removal-Ton ('leicht liegen geblieben'). Niedrige Schwelle.",
+        },
+        {
+          id: "v2",
+          label: "Neugierig & offen",
+          subject: `Hey ${p.firstName} – noch offen?`,
+          body: `Hey ${p.firstName},\n\n${ctx.agentName} hier von ${ctx.companyName}.\n\nDu hattest dich vor ${since} gemeldet – ich wollte kurz nachfragen, ob das Thema noch aktuell ist. Manchmal passt der Moment einfach nicht.\n\nFalls ja: Ich bin da. Falls nein: Völlig okay, kurze Rückmeldung reicht.\n\nHerzliche Grüsse,\n${ctx.agentName}`,
+          tone: "locker, respektvoll, druckfrei",
+          score: p.segment === "hot" ? 83 : p.segment === "warm" ? 80 : 70,
+          reasoning: "B2C: Kurz, persönlich, gibt expliziten Exit. 'Manchmal passt der Moment nicht' — nimmt Scham weg.",
+        },
+        {
+          id: "v3",
+          label: "Ergebnis-fokussiert",
+          subject: `Was sich für dich verändert haben könnte, ${p.firstName}`,
+          body: `Hallo ${p.firstName},\n\n${ctx.agentName} von ${ctx.companyName}.\n\nVor ${since} hattest du dich für ${ctx.product} interessiert. Seitdem haben wir vielen Menschen${industryCtx} geholfen – und ich dachte, das könnte auch für dich relevant sein.\n\nWäre ein kurzes Gespräch sinnvoll – 15 Minuten, komplett unverbindlich?\n\nFreue mich auf deine Rückmeldung,\n${ctx.agentName}`,
+          tone: "ergebnisorientiert, einladend",
+          score: p.segment === "hot" ? 77 : p.segment === "warm" ? 74 : 78,
+          reasoning: "B2C: Social Proof durch 'vielen Menschen geholfen'. Kurzer, klarer CTA.",
+        },
+      ];
+    }
+    if (channel === "whatsapp") {
+      return [
+        {
+          id: "v1",
+          label: "Herzlich & persönlich",
+          body: `Hey ${p.firstName} 👋 Hier ist ${ctx.agentName} von ${ctx.companyName}.\n\nDu hattest dich vor ${since} gemeldet – ich wollte kurz fragen, ob das Thema noch aktuell ist.\n\nKein Druck – nur kurze Rückmeldung wenn du magst 😊`,
+          tone: "locker, warm, emoji sparsam",
+          score: 86,
+          reasoning: "B2C WhatsApp: Du-Form, emoji natürlich eingesetzt, sehr kurz, echte Frage ohne Agenda.",
+        },
+        {
+          id: "v2",
+          label: "Direkt & freundlich",
+          body: `Hallo ${p.firstName}! ${ctx.agentName} hier.\n\nKurze Frage: Ist ${ctx.product}${industryCtx} für dich noch ein Thema? Manchmal geht sowas im Alltag unter – ich verstehe das 🙏\n\nEinfach kurz Ja oder Nein reicht!`,
+          tone: "direkt, verständnisvoll",
+          score: 80,
+          reasoning: "B2C: 'Geht im Alltag unter' = Shame-Removal. Einfache binäre Frage senkt Schwelle.",
+        },
+      ];
+    }
+    // B2C SMS
+    return [
+      {
+        id: "v1",
+        label: "Kurz & persönlich",
+        body: `Hallo ${p.firstName}, ${ctx.agentName} von ${ctx.companyName}. Du hattest dich vor ${since} gemeldet – ist das Thema noch aktuell? Kurze Antwort reicht 🙏`,
+        tone: "kurz, persönlich, druckfrei",
+        score: 78,
+        reasoning: "B2C SMS: Du-Form, max. 160 Zeichen, klar und direkt.",
+      },
+    ];
+  }
+
+  // ── B2B VARIANTS (default) ────────────────────────────────────────────────────
   if (channel === "email") {
     return [
       {
@@ -600,30 +673,30 @@ export function generateBookingMessages(
     return [
       {
         id: "b-1",
-        label: "Terminvorschlag",
-        subject: `${p.firstName}, wann passt es Ihnen?`,
-        body: `Das freut mich, ${p.firstName}!\n\nDann würde ich vorschlagen, dass wir kurz sprechen – 20 Minuten reichen, um Ihnen konkret zu zeigen, wie ${ctx.companyName} Ihnen${p.company ? ` bei ${p.company}` : ""} helfen kann.\n\nPasst Ihnen eher:\n• Anfang der Woche (Mo/Di)\n• Mitte der Woche (Mi/Do)\n\nIch richte mich nach Ihnen.\n\nHerzliche Grüsse,\n${ctx.agentName}`,
-        tone: "enthusiastisch, flexibel, einfach",
-        score: 93,
-        reasoning: "Konkrete Terminvorschläge mit eingeschränkter Auswahl reduzieren Entscheidungsaufwand. 'Ich richte mich nach Ihnen' zeigt Respekt.",
+        label: "Terminpräferenz erfragen",
+        subject: `${p.firstName}, wann passt es Ihnen am besten?`,
+        body: `Das freut mich, ${p.firstName}!\n\nDann würde ich vorschlagen, dass wir kurz sprechen – 20 Minuten reichen, um Ihnen konkret zu zeigen, wie ${ctx.companyName} Ihnen${p.company ? ` bei ${p.company}` : ""} helfen kann.\n\nEine kurze Frage zur Planung: Passt es Ihnen grundsätzlich besser Vormittags oder Nachmittags? Und eher diese oder nächste Woche?\n\nDann schlage ich Ihnen direkt zwei konkrete Zeiten vor.\n\nHerzliche Grüsse,\n${ctx.agentName}`,
+        tone: "persönlich, flexibel, unkompliziert",
+        score: 94,
+        reasoning: "Statt direkt Slots anzubieten: erst Präferenz erfragen (Vm/Nm + diese/nächste Woche). Reduziert Hin-und-Her, zeigt Rücksicht auf den Kalender des Leads.",
       },
       {
         id: "b-2",
-        label: "Booking Link",
-        subject: `Direkt Termin buchen – ${p.firstName}`,
-        body: `Super, ${p.firstName}!\n\nHier können Sie sich direkt einen passenden Termin sichern:\n\n${ctx.bookingLink}\n\n20 Minuten, kein Verkaufsgespräch – nur eine ehrliche Einschätzung, ob und wie wir helfen können.\n\nFreue mich auf unser Gespräch!\n\nBeste Grüsse,\n${ctx.agentName}`,
-        tone: "einfach, direkt, unkompliziert",
-        score: 89,
-        reasoning: "Booking Link gibt dem Lead die Kontrolle. Kein Hin und Her mit Terminoptionen.",
+        label: "Zwei konkrete Slots",
+        subject: `2 freie Zeiten für Sie, ${p.firstName}`,
+        body: `Wunderbar, ${p.firstName}!\n\nIch habe folgende zwei Zeiten für Sie reserviert:\n\n• Dienstag, ${new Date(Date.now() + 8*86400000).toLocaleDateString("de-CH", {day:"2-digit",month:"2-digit"})}, 09:30–09:50 Uhr\n• Donnerstag, ${new Date(Date.now() + 10*86400000).toLocaleDateString("de-CH", {day:"2-digit",month:"2-digit"})}, 14:00–14:20 Uhr\n\nWelche Option passt Ihnen besser?\n\nNach Ihrer Bestätigung erhalten Sie direkt eine Kalendereinladung.\n\n*(Oder selbst buchen: ${ctx.bookingLink})*\n\nFreue mich auf das Gespräch,\n${ctx.agentName}`,
+        tone: "konkret, persönlich, einfach",
+        score: 91,
+        reasoning: "Direkt 2 konkrete Slots. Eingeschränkte Auswahl reduziert Entscheidungsaufwand. Booking-Link als Fallback.",
       },
       {
         id: "b-3",
-        label: "Persönliche Terminoptionen",
-        subject: `2–3 Zeiten für Sie, ${p.firstName}`,
-        body: `Wunderbar, ${p.firstName}!\n\nIch schlage Ihnen gerne 2–3 konkrete Zeiten vor:\n\n• Dienstag, 10:00–10:30 Uhr\n• Donnerstag, 14:00–14:30 Uhr\n• Freitag, 09:00–09:30 Uhr\n\nWelche Option passt Ihnen am besten? Oder lieber einen anderen Zeitpunkt?\n\nFreue mich auf das Gespräch,\n${ctx.agentName}`,
-        tone: "persönlich, konkret, einfach",
-        score: 91,
-        reasoning: "Konkrete Terminoptionen sind oft effektiver als ein Booking Link für Leads, die keine Tools nutzen möchten.",
+        label: "Booking Link",
+        subject: `Direkt Termin buchen – ${p.firstName}`,
+        body: `Super, ${p.firstName}!\n\nAm einfachsten: Buchen Sie sich direkt einen passenden Termin:\n\n${ctx.bookingLink}\n\n20 Minuten, kein Verkaufsgespräch – nur eine ehrliche Einschätzung, ob und wie wir helfen können.\n\nFreue mich auf unser Gespräch!\n\nBeste Grüsse,\n${ctx.agentName}`,
+        tone: "direkt, unkompliziert",
+        score: 87,
+        reasoning: "Booking Link gibt dem Lead volle Kontrolle. Gut für selbstständige Entscheider die keine Rückfragen wollen.",
       },
     ];
   }
@@ -631,22 +704,38 @@ export function generateBookingMessages(
     return [
       {
         id: "b-wapp-1",
-        label: "Terminoptionen",
-        body: `Perfekt ${p.firstName}! 🎉\n\nDann lass uns kurz sprechen – 20 Minuten reichen.\n\nPasst Ihnen besser:\n• Anfang Woche (Mo/Di)\n• Mitte Woche (Mi/Do)\n\nOder direkt hier buchen: ${ctx.bookingLink}\n\nFreue mich! 😊`,
-        tone: "enthusiastisch, einfach",
-        score: 90,
-        reasoning: "WhatsApp erlaubt informelleren Ton. Kombiniert direkte Optionen mit Booking Link.",
+        label: "Terminpräferenz",
+        body: `Perfekt ${p.firstName}! 🎉\n\nDann lass uns kurz sprechen – 20 Minuten reichen.\n\nKurze Frage: Passt Dir besser Vormittag oder Nachmittag? Und eher diese oder nächste Woche?\n\nIch schlage Dir dann direkt 2 Zeiten vor 📅`,
+        tone: "freundlich, persönlich",
+        score: 91,
+        reasoning: "WhatsApp: persönlicher Ton. Präferenz erfragen bevor Slots vorgeschlagen werden — weniger Hin-und-Her.",
+      },
+      {
+        id: "b-wapp-2",
+        label: "Direkt buchen",
+        body: `Super ${p.firstName}! Direkt einen Termin sichern:\n\n${ctx.bookingLink}\n\n20 Min, kein Druck – ich zeige Dir konkret was das bringt 😊`,
+        tone: "kurz, direkt",
+        score: 85,
+        reasoning: "Booking Link als schnelle Option für Mobile-affine Leads.",
       },
     ];
   }
   return [
     {
       id: "b-sms-1",
-      label: "Terminvorschlag",
-      body: `Super ${p.firstName}! Passt Ihnen Anfang oder Mitte der Woche für ein 20-Min-Gespräch? Oder direkt buchen: ${ctx.bookingLink}`,
+      label: "Terminpräferenz",
+      body: `Super ${p.firstName}! Kurze Frage: Passt Vormittag oder Nachmittag besser? Diese oder nächste Woche? Dann schlage ich 2 konkrete Zeiten vor.`,
       tone: "kurz, direkt",
-      score: 85,
-      reasoning: "SMS Booking: maximale Kürze mit Booking Link als Fallback.",
+      score: 88,
+      reasoning: "SMS: Präferenz erfragen in 2 Dimensionen (Vm/Nm + diese/nächste Woche). Danach 2 konkrete Slots.",
+    },
+    {
+      id: "b-sms-2",
+      label: "Booking Link",
+      body: `Super ${p.firstName}! Direkt buchen: ${ctx.bookingLink} — 20 Min Demo, kein Druck.`,
+      tone: "minimal",
+      score: 80,
+      reasoning: "SMS Fallback mit Booking Link.",
     },
   ];
 }
@@ -726,26 +815,38 @@ export function getAgentThinking(
 // This drives the conversation forward through 2–4 turns until booking/close.
 
 export type ContinuationType =
-  // After "interested" agent reply
+  // After "interested" agent reply — discovery phase
   | "describes_problem"
   | "asks_for_details"
   | "hesitant_but_open"
-  // After "neutral" agent reply
+  // After neutral → interested pivot
   | "now_interested"
   | "still_unsure"
   | "not_relevant_after_all"
-  // After "already_solved" agent reply
+  // After already_solved
   | "open_to_compare"
   | "satisfied_stays"
-  // After "not_interested" agent reply
+  // After not_interested
   | "timing_was_the_issue"
   | "fundamental_no"
-  // After "no_response" follow-up
+  // After no_response follow-up
   | "responds_late"
   | "still_no_response"
+  // Discovery round 2 — lead elaborates
+  | "elaborates_challenge"
+  | "mentions_multiple_problems"
+  | "wants_next_step_now"
+  // Scheduling preference (after booking trigger)
+  | "scheduling_morning"
+  | "scheduling_afternoon"
   // Round 3+ (deeper interested)
   | "ready_to_talk"
-  | "needs_one_more_nudge";
+  | "needs_one_more_nudge"
+  // Objection handling — can appear at any stage
+  | "objects_price"
+  | "objects_time"
+  | "objects_trust"
+  | "objects_competitor";
 
 export interface ContinuationOption {
   type: ContinuationType;
@@ -757,27 +858,47 @@ export interface ContinuationOption {
 }
 
 export function getContinuationOptions(
-  state: ResponseType,
+  state: ResponseType | "booking",
   round: number
 ): ContinuationOption[] {
   if (state === "interested" && round === 1) {
     return [
-      { type: "describes_problem", label: "Beschreibt Problem", example: `"Wir kämpfen konkret damit, dass wir..."`, color: "text-emerald-700", bg: "bg-emerald-50", border: "border-emerald-200" },
-      { type: "asks_for_details",  label: "Fragt nach Details",  example: `"Interessant – wie genau funktioniert das?"`, color: "text-blue-700",    bg: "bg-blue-50",    border: "border-blue-200" },
-      { type: "hesitant_but_open", label: "Zögert noch",         example: `"Klingt gut, aber ich bin noch nicht sicher..."`, color: "text-amber-700",  bg: "bg-amber-50",   border: "border-amber-200" },
+      { type: "describes_problem",      label: "Beschreibt Problem",      example: `"Wir kämpfen konkret damit, dass wir..."`,           color: "text-emerald-700", bg: "bg-emerald-50", border: "border-emerald-200" },
+      { type: "asks_for_details",       label: "Fragt nach Details",      example: `"Interessant – wie genau funktioniert das?"`,         color: "text-blue-700",    bg: "bg-blue-50",    border: "border-blue-200" },
+      { type: "hesitant_but_open",      label: "Zögert noch",             example: `"Klingt gut, aber ich bin noch nicht sicher..."`,     color: "text-amber-700",  bg: "bg-amber-50",   border: "border-amber-200" },
     ];
   }
-  if (state === "interested" && round >= 2) {
+  // Discovery round 2 — after agent asked about problem
+  if (state === "interested" && round === 2) {
     return [
-      { type: "ready_to_talk",       label: "Bereit für Gespräch", example: `"Ja, ein kurzes Gespräch würde ich mir vorstellen."`, color: "text-emerald-700", bg: "bg-emerald-50", border: "border-emerald-200" },
-      { type: "needs_one_more_nudge", label: "Braucht noch Überzeugung", example: `"Ich überlege noch... was genau würden wir besprechen?"`, color: "text-amber-700", bg: "bg-amber-50", border: "border-amber-200" },
+      { type: "elaborates_challenge",       label: "Schildert Herausforderung",  example: `"Das Hauptproblem ist, dass wir zu wenig Zeit haben für..."`,               color: "text-emerald-700", bg: "bg-emerald-50", border: "border-emerald-200" },
+      { type: "mentions_multiple_problems", label: "Mehrere Probleme",           example: `"Eigentlich haben wir da mehrere Baustellen..."`,                           color: "text-violet-700",  bg: "bg-violet-50",  border: "border-violet-200" },
+      { type: "wants_next_step_now",        label: "Bereit für nächsten Schritt", example: `"Das klingt genau richtig. Was wäre jetzt konkret der nächste Schritt?"`, color: "text-blue-700",    bg: "bg-blue-50",    border: "border-blue-200" },
+      { type: "objects_price",              label: "Preiseinwand",               example: `"Das klingt interessant, aber wir haben Budget-Einschränkungen."`,           color: "text-amber-700",   bg: "bg-amber-50",   border: "border-amber-200" },
+      { type: "objects_trust",              label: "Vertrauenseinwand",          example: `"Woher weiss ich, dass das wirklich funktioniert?"`,                        color: "text-orange-700",  bg: "bg-orange-50",  border: "border-orange-200" },
+    ];
+  }
+  // Scheduling preference — after booking is triggered
+  if (state === "booking") {
+    return [
+      { type: "scheduling_morning",    label: "Lieber Vormittags",  example: `"Mir passt es besser vormittags, eher nächste Woche."`,  color: "text-emerald-700", bg: "bg-emerald-50", border: "border-emerald-200" },
+      { type: "scheduling_afternoon",  label: "Lieber Nachmittags", example: `"Nachmittags wäre mir lieber, diese Woche wenn möglich."`, color: "text-blue-700",    bg: "bg-blue-50",    border: "border-blue-200" },
+    ];
+  }
+  if (state === "interested" && round >= 3) {
+    return [
+      { type: "ready_to_talk",        label: "Bereit für Gespräch",      example: `"Ja, ein kurzes Gespräch würde ich mir vorstellen."`,      color: "text-emerald-700", bg: "bg-emerald-50", border: "border-emerald-200" },
+      { type: "needs_one_more_nudge", label: "Braucht noch Überzeugung", example: `"Ich überlege noch... was genau würden wir besprechen?"`,  color: "text-amber-700",   bg: "bg-amber-50",   border: "border-amber-200" },
+      { type: "objects_time",         label: "Zeiteinwand",              example: `"Im Moment haben wir gerade zu viel auf dem Tisch."`,       color: "text-slate-600",   bg: "bg-slate-50",   border: "border-slate-200" },
+      { type: "objects_competitor",   label: "Konkurrenzvergleich",      example: `"Wir schauen uns gerade auch noch andere Anbieter an."`,   color: "text-purple-700",  bg: "bg-purple-50",  border: "border-purple-200" },
     ];
   }
   if (state === "neutral") {
     return [
-      { type: "now_interested",         label: "Jetzt interessiert",   example: `"Ah, das klingt tatsächlich relevant für uns."`, color: "text-emerald-700", bg: "bg-emerald-50", border: "border-emerald-200" },
-      { type: "still_unsure",           label: "Weiterhin unsicher",   example: `"Hmm, ich weiss noch nicht... vielleicht."`,     color: "text-amber-700",  bg: "bg-amber-50",   border: "border-amber-200" },
-      { type: "not_relevant_after_all", label: "Doch kein Interesse",  example: `"Nein, das ist bei uns wirklich kein Thema."`,   color: "text-red-700",    bg: "bg-red-50",     border: "border-red-200" },
+      { type: "now_interested",         label: "Jetzt interessiert",   example: `"Ah, das klingt tatsächlich relevant für uns."`,  color: "text-emerald-700", bg: "bg-emerald-50", border: "border-emerald-200" },
+      { type: "still_unsure",           label: "Weiterhin unsicher",   example: `"Hmm, ich weiss noch nicht... vielleicht."`,      color: "text-amber-700",  bg: "bg-amber-50",   border: "border-amber-200" },
+      { type: "objects_price",          label: "Preiseinwand",         example: `"Das klingt interessant, aber zu teuer für uns."`, color: "text-orange-700", bg: "bg-orange-50",  border: "border-orange-200" },
+      { type: "not_relevant_after_all", label: "Doch kein Interesse",  example: `"Nein, das ist bei uns wirklich kein Thema."`,    color: "text-red-700",    bg: "bg-red-50",     border: "border-red-200" },
     ];
   }
   if (state === "already_solved") {
@@ -826,15 +947,16 @@ export function generateContinuationExchange(
       return {
         leadText: `Konkret gesagt: Wir verlieren aktuell viele Leads, weil nach der ersten Kontaktaufnahme kein systematisches Follow-up stattfindet. Das kostet uns jeden Monat einige potenzielle Kunden.`,
         agentMsg: short
-          ? `Das kenne ich genau ${p.firstName} – das ist bei vielen ${p.industry || "B2B"}-Unternehmen das Problem. Darf ich kurz zeigen, wie wir das konkret lösen? 20 Min reichen.`
-          : `Das kenne ich gut, ${p.firstName}.\n\nGenau dieses Problem – Leads die nach dem Erstkontakt verloren gehen – ist der Kern von dem, was ${ctx.companyName} löst.\n\n${ctx.valueProp}\n\nIch würde Ihnen gerne in 20 Minuten konkret zeigen, wie das${co} aussehen könnte. Würde das passen?`,
-        agentLabel: "Empathie + CTA",
+          ? `Das kenne ich – das ist bei vielen ${p.industry || "B2B"}-Firmen das Problem. Darf ich fragen: Wie viele Leads verlieren Sie so schätzungsweise pro Monat? Und gibt es noch andere Herausforderungen in dem Bereich?`
+          : `Das kenne ich gut, ${p.firstName} – und ich höre das oft.\n\nDarf ich kurz nachfragen, um das besser einschätzen zu können:\n\n• Wie viele Leads gehen Ihnen schätzungsweise pro Monat verloren, weil das Follow-up nicht stattgefunden hat?\n• Und liegt das eher an Kapazität, an fehlenden Prozessen – oder an beidem?\n\nIch frage, weil die Lösung je nach Situation sehr unterschiedlich aussieht, und ich möchte nichts empfehlen, das nicht genau auf Ihre Situation passt.`,
+        agentLabel: "Tiefer ins Problem",
         agentThinking: [
-          { phase: "Problem erkannt", content: `Lead hat konkretes Problem beschrieben: verlorene Leads, kein Follow-up-System. Direkte Verbindung zu unserer Lösung.`, highlight: true },
-          { phase: "Strategie", content: "Empathie zeigen → Lösung direkt verknüpfen → CTA für 20-Min-Call." },
+          { phase: "Problem erkannt", content: `Lead beschreibt verlorene Leads / kein Follow-up-System. Direkte Verbindung zu unserer Lösung — aber erst vollständig qualifizieren.`, highlight: true },
+          { phase: "Strategie", content: "Empathie zeigen → mit Tiefenfragen Kontext sammeln (Volumen, Ursache) → danach erst Lösung und CTA." },
+          { phase: "Nächster Schritt", content: "2 gezielte Qualifizierungsfragen. Ziel: Kontext für massgeschneiderte Lösung." },
         ],
         nextState: "interested",
-        triggerBooking: true,
+        triggerBooking: false,
         closeConversation: false,
       };
 
@@ -842,15 +964,15 @@ export function generateContinuationExchange(
       return {
         leadText: `Können Sie mir kurz erklären, wie das genau funktioniert? Ich verstehe noch nicht ganz, was Sie konkret machen.`,
         agentMsg: short
-          ? `Klar ${p.firstName}! ${ctx.valueProp} – in 20 Min kann ich das konkret am Beispiel von ${p.company || "Ihrem Setup"} zeigen. Passt das?`
-          : `Sehr gerne, ${p.firstName}!\n\nIn einem Satz: ${ctx.valueProp}\n\nKonkret bedeutet das für ${p.company || "Ihr Unternehmen"}: Statt manuell nachzufassen, übernimmt unser System das – mit Nachrichten, die sich wie persönliche Texte anfühlen.\n\nDas lässt sich am einfachsten in einem 20-minütigen Gespräch erklären – darf ich Ihnen das direkt zeigen?`,
-        agentLabel: "Erklärung + Einladung",
+          ? `Klar ${p.firstName}! ${ctx.valueProp}\n\nBevor ich das genauer erkläre – kurze Frage: Wo ist bei Ihnen${co} aktuell der grösste Engpass beim Thema ${ctx.painPoint}?`
+          : `Sehr gerne, ${p.firstName}!\n\nIn einem Satz: ${ctx.valueProp}\n\nBevor ich das aber zu abstrakt erkläre, möchte ich das lieber auf Ihre konkrete Situation zuschneiden.\n\nEine kurze Frage: Wo ist bei ${p.company || "Ihnen"} aktuell der grösste Engpass – ist es eher die Zeit für manuelles Nachfassen, die fehlende Systematik, oder habt ihr schlicht zu viele Leads, die ihr nicht verwalten könnt?\n\nDann kann ich Ihnen zeigen, was davon wir konkret lösen – und was nicht.`,
+        agentLabel: "Kontext vor Erklärung",
         agentThinking: [
-          { phase: "Lead will Infos", content: "Lead fragt nach Details — gutes Zeichen. Jetzt präzise erklären und direkt zur Demo einladen.", highlight: true },
-          { phase: "Nächster Schritt", content: "Value-Prop konkret machen → Demo-Call vorschlagen." },
+          { phase: "Lead will Infos", content: "Lead fragt nach Details — gutes Zeichen. Aber: erst Kontext sammeln, bevor wir pitchen. Maßgeschneiderte Antwort wirkt besser.", highlight: true },
+          { phase: "Strategie", content: "Value-Prop kurz andeuten → sofort Qualifizierungsfrage → Antwort dann personalisiert auf Problem zuschneiden." },
         ],
         nextState: "interested",
-        triggerBooking: true,
+        triggerBooking: false,
         closeConversation: false,
       };
 
@@ -874,14 +996,15 @@ export function generateContinuationExchange(
       return {
         leadText: `Ah, das klingt tatsächlich interessanter als ich dachte. Was genau wäre der nächste Schritt?`,
         agentMsg: short
-          ? `Super ${p.firstName}! Der nächste Schritt wäre ein kurzes 20-Min-Gespräch. Passt Ihnen Anfang oder Mitte der Woche?`
-          : `Das freut mich, ${p.firstName}!\n\nDer einfachste nächste Schritt: ein 20-minütiges Gespräch, in dem ich Ihnen live zeige, wie ${ctx.companyName} konkret${co} helfen kann.\n\nPasst Ihnen besser Anfang oder Mitte der Woche?`,
-        agentLabel: "Momentum nutzen",
+          ? `Das freut mich ${p.firstName}! Kurze Frage bevor ich etwas vorschlage: Was ist aktuell der grösste Schmerzpunkt bei ${ctx.painPoint}${co}? Hat sich da seit unserem letzten Gespräch etwas verändert?`
+          : `Das freut mich wirklich, ${p.firstName}!\n\nBevor ich Ihnen einen nächsten Schritt vorschlage – ich möchte sicherstellen, dass das, was ich zeige, auch wirklich zu Ihrer aktuellen Situation passt.\n\nZwei kurze Fragen:\n\n1. Was ist heute die grösste Herausforderung bei ${ctx.painPoint}${co}?\n2. Hat sich seit unserem letzten Gespräch vor ${p.daysSinceContact ? Math.round(p.daysSinceContact / 30) + " Monaten" : "einer Weile"} etwas verändert – z.B. in der Teamgrösse, den Zielen, oder im Budget?\n\nMit diesen Infos kann ich Ihnen viel gezielter helfen.`,
+        agentLabel: "Discovery vor CTA",
         agentThinking: [
-          { phase: "Pivot erfolgreich", content: "Neutral → Interessiert ✓. Lead fragt aktiv nach nächstem Schritt. Direkt zum Termin.", highlight: true },
+          { phase: "Pivot erfolgreich", content: "Neutral → Interessiert ✓. Lead fragt nach nächstem Schritt — aber: erst Situation qualifizieren, dann CTA. So wirkt die Empfehlung massgeschneidert statt generisch.", highlight: true },
+          { phase: "Strategie", content: "2 gezielte Discovery-Fragen: (1) aktuelles Problem, (2) was hat sich seit letztem Gespräch verändert. Danach maßgeschneiderter CTA." },
         ],
         nextState: "interested",
-        triggerBooking: true,
+        triggerBooking: false,
         closeConversation: false,
       };
 
@@ -949,14 +1072,15 @@ export function generateContinuationExchange(
       return {
         leadText: `Eigentlich, jetzt wo ich darüber nachdenke – es war damals wirklich nur ein Timing-Problem. Was genau bieten Sie an?`,
         agentMsg: short
-          ? `Super ${p.firstName}! Das habe ich mir gedacht. 20 Min für ein konkretes Gespräch? Anfang oder Mitte Woche?`
-          : `Das dachte ich mir, ${p.firstName}.\n\nTiming ist bei vielen unserer besten Kunden der einzige Grund gewesen, warum wir nicht früher gestartet haben.\n\n${ctx.valueProp}\n\nLassen Sie mich das direkt zeigen – 20 Minuten. Passt Ihnen Anfang oder Mitte der Woche?`,
-        agentLabel: "Timing aufgelöst",
+          ? `Das dachte ich mir ${p.firstName}! Bevor ich erkläre: Hat sich bei ${ctx.painPoint}${co} seither etwas verändert, oder ist das noch gleich wie damals?`
+          : `Das dachte ich mir, ${p.firstName} – Timing ist der häufigste Grund, warum gute Gespräche einschlafen.\n\nBevor ich Ihnen erkläre, was sich bei uns getan hat: Ich möchte verstehen, ob sich die Situation bei ${p.company || "Ihnen"} seither verändert hat.\n\nIst ${ctx.painPoint} noch das gleiche Thema wie damals – oder gibt es neue Baustellen, die hinzugekommen sind?\n\nDas hilft mir, das Gespräch wirklich auf Ihre aktuelle Situation zuzuschneiden, nicht auf das, was wir vor ${p.daysSinceContact ? Math.round(p.daysSinceContact / 30) + " Monaten" : "einer Weile"} besprochen haben.`,
+        agentLabel: "Situation neu einschätzen",
         agentThinking: [
-          { phase: "Timing-Einwand aufgelöst", content: "Lead hat erkannt, dass es nur Timing war. Jetzt direkt zum Call.", highlight: true },
+          { phase: "Timing-Einwand aufgelöst", content: "Lead erkennt: es war nur Timing. Jetzt: nicht sofort pitchen — erst aktuelle Situation neu qualifizieren. Viel hängt davon ab, was sich verändert hat.", highlight: true },
+          { phase: "Strategie", content: "Situationscheck bevor CTA: Was hat sich geändert? So kann der folgende Pitch genau auf die heutige Situation abgestimmt werden." },
         ],
         nextState: "interested",
-        triggerBooking: true,
+        triggerBooking: false,
         closeConversation: false,
       };
 
@@ -979,14 +1103,15 @@ export function generateContinuationExchange(
       return {
         leadText: `Sorry für die späte Rückmeldung! Ja, das Thema ist tatsächlich noch offen. Was haben Sie konkret im Angebot?`,
         agentMsg: short
-          ? `Kein Problem ${p.firstName}! ${ctx.valueProp} – am besten kurzes Gespräch. Anfang oder Mitte Woche?`
-          : `Kein Problem, ${p.firstName} – ich freue mich, dass Sie sich melden!\n\n${ctx.valueProp}\n\nAm einfachsten wäre ein kurzes 20-minütiges Gespräch, in dem ich das an Ihrem Beispiel${co} konkret zeige.\n\nPasst Ihnen Anfang oder Mitte der Woche?`,
-        agentLabel: "Spätantwort optimal nutzen",
+          ? `Kein Problem ${p.firstName}! Bevor ich erkläre: Was ist bei Ihnen${co} aktuell konkret das grösste Problem mit ${ctx.painPoint}?`
+          : `Kein Problem, ${p.firstName} – ich freue mich wirklich, dass Sie sich melden!\n\nBevor ich Ihnen erkläre, was ${ctx.companyName} konkret macht, möchte ich verstehen, wo bei ${p.company || "Ihnen"} aktuell der Schuh drückt:\n\nWas ist im Moment die grösste Herausforderung bei ${ctx.painPoint}? Und hat sich in der letzten Zeit etwas verändert, das das Thema jetzt wieder aktuell macht?\n\nIch frage, weil ich sicherstellen möchte, dass das, was ich Ihnen zeige, auch wirklich relevant ist – und nicht einfach eine generische Demo.`,
+        agentLabel: "Spätantwort – Discovery first",
         agentThinking: [
-          { phase: "Spätantwort erhalten", content: "No Response → Lead antwortet doch. Kaufsignal vorhanden. Direkt zum Termin.", highlight: true },
+          { phase: "Spätantwort erhalten", content: "No Response → Lead antwortet doch. Kaufsignal vorhanden. Aber: erst verstehen was sich geändert hat, dann CTA.", highlight: true },
+          { phase: "Strategie", content: "Lead fragt direkt nach Angebot — Reflex wäre Pitch. Besser: kurze Discovery-Frage zuerst. Macht die folgende Antwort viel relevanter." },
         ],
         nextState: "interested",
-        triggerBooking: true,
+        triggerBooking: false,
         closeConversation: false,
       };
 
@@ -1035,14 +1160,165 @@ export function generateContinuationExchange(
         closeConversation: false,
       };
 
+    case "elaborates_challenge":
+      return {
+        leadText: `Das Hauptproblem ist, dass wir zu wenig Kapazität haben für manuelles Nachfassen. Wir haben zwar Leads, aber die Konvertierungsrate ist zu tief, weil wir viele einfach liegen lassen.`,
+        agentMsg: short
+          ? `Das kenne ich genau ${p.firstName}. Gute Nachricht: genau das ist unser Kernprodukt. Ich würde Ihnen das gerne in 20 Min zeigen – passt Ihnen eher Vormittag oder Nachmittag?`
+          : `Das kenne ich sehr gut, ${p.firstName} – und es ist ehrlich gesagt das Problem, für das ${ctx.companyName} gebaut wurde.\n\n${ctx.valueProp}\n\nIch kann Ihnen in 20 Minuten konkret zeigen, wie das für ${p.company || "Ihr Team"} aussehen würde – mit realistischen Zahlen, ohne Hochglanzdemo.\n\nEine Frage zur Planung: Passt es Ihnen grundsätzlich besser Vormittags oder Nachmittags? Und eher diese oder nächste Woche?`,
+        agentLabel: "Lösung verknüpfen + Terminpräferenz",
+        agentThinking: [
+          { phase: "Problem validiert", content: "Lead beschreibt Kernproblem: Kapazität für Follow-up fehlt, Konversionsrate leidet. Direkte Verbindung zu unserer Lösung.", highlight: true },
+          { phase: "Strategie", content: "Problem explizit widerspiegeln → unsere Lösung als direkte Antwort positionieren → Terminpräferenz erfragen (Vm/Nm + diese/nächste Woche)." },
+          { phase: "Buchungsfluss", content: "Statt direkt Slots anzubieten: erst Präferenz (Vm/Nm, diese/nächste Woche) → dann 2 konkrete Slots." },
+        ],
+        nextState: "booking",
+        triggerBooking: true,
+        closeConversation: false,
+      };
+
+    case "mentions_multiple_problems":
+      return {
+        leadText: `Eigentlich haben wir da mehrere Baustellen: Das Follow-up klappt nicht, aber auch die initiale Ansprache ist oft zu generisch, und wir wissen nicht wirklich, welche Leads Priorität haben.`,
+        agentMsg: short
+          ? `Das sind drei verschiedene Themen ${p.firstName} – wir können bei allen helfen. Welches brennt aktuell am meisten? Dann zeige ich das zuerst.`
+          : `Das sind drei echte Probleme, ${p.firstName} – und ich schätze die Ehrlichkeit.\n\nKurz eingeordnet:\n\n• **Kein systematisches Follow-up** → das ist unser Kernbereich\n• **Zu generische Ansprache** → lösen wir mit KI-basierter Hyper-Personalisierung\n• **Lead-Priorisierung unklar** → unser Scoring-System zeigt sofort, welche Leads reaktivierbar sind\n\nWelches dieser drei Themen brennt bei ${p.company || "Ihnen"} aktuell am meisten? Das würde ich Ihnen als erstes zeigen.\n\nUnd: passt es Ihnen für ein 20-Min-Gespräch eher Vormittags oder Nachmittags?`,
+        agentLabel: "Probleme strukturieren + Fokus",
+        agentThinking: [
+          { phase: "Mehrere Probleme erkannt", content: "Lead nennt 3 Probleme: Follow-up, Personalisierung, Lead-Scoring. Alle drei liegen in unserem Bereich.", highlight: true },
+          { phase: "Strategie", content: "Probleme strukturiert wiedergeben (zeigt Zuhören) → auf alle drei eingehen → Frage: welches brennt am meisten? → Fokus für Demo setzen → Terminpräferenz erfragen." },
+        ],
+        nextState: "booking",
+        triggerBooking: true,
+        closeConversation: false,
+      };
+
+    case "wants_next_step_now":
+      return {
+        leadText: `Das klingt genau richtig für uns. Was wäre jetzt konkret der nächste Schritt?`,
+        agentMsg: short
+          ? `Super ${p.firstName}! Der nächste Schritt: ein 20-Min-Gespräch, in dem ich das konkret für ${p.company || "Euch"} zeige. Passt Vormittag oder Nachmittag besser?`
+          : `Wunderbar, ${p.firstName} – das freut mich zu hören!\n\nDer konkrete nächste Schritt: ein 20-minütiges Gespräch, in dem ich Ihnen live zeige, wie ${ctx.companyName} das für ${p.company || "Ihr Team"} konkret umsetzen würde – mit echten Zahlen, nicht mit generischen Versprechen.\n\nUm einen passenden Termin zu finden: Passt es Ihnen grundsätzlich besser Vormittags oder Nachmittags? Und eher diese oder nächste Woche?\n\nDann schlage ich Ihnen direkt zwei konkrete Zeiten vor.`,
+        agentLabel: "Nächster Schritt + Terminpräferenz",
+        agentThinking: [
+          { phase: "Lead bereit", content: "Lead signalisiert klare Kaufbereitschaft und fragt aktiv nach nächstem Schritt. Jetzt Terminbuchung einleiten.", highlight: true },
+          { phase: "Buchungsfluss", content: "Erst Präferenz erfragen (Vm/Nm + diese/nächste Woche) → dann 2 konkrete Slots mit Kalender-Abgleich. Weniger Friction als sofortiger Link." },
+        ],
+        nextState: "booking",
+        triggerBooking: true,
+        closeConversation: false,
+      };
+
+    case "scheduling_morning":
+      return {
+        leadText: `Mir passt Vormittags besser, am liebsten nächste Woche wenn möglich.`,
+        agentMsg: short
+          ? `Perfekt ${p.firstName}! Zwei Optionen nächste Woche Vormittag:\n• Dienstag, 09:30–09:50\n• Donnerstag, 10:00–10:20\n\nWelche passt Ihnen?`
+          : `Perfekt, ${p.firstName} – ich habe nächste Woche Vormittag noch zwei freie Slots für Sie:\n\n• **Dienstag, ${new Date(Date.now() + 8*86400000).toLocaleDateString("de-CH", {day:"2-digit",month:"2-digit"})}, 09:30–09:50 Uhr**\n• **Donnerstag, ${new Date(Date.now() + 10*86400000).toLocaleDateString("de-CH", {day:"2-digit",month:"2-digit"})}, 10:00–10:20 Uhr**\n\nWelcher Termin passt Ihnen besser? Nach Ihrer Bestätigung erhalten Sie direkt eine Kalendereinladung.\n\n*(Alternativ: direkt selbst buchen unter ${ctx.bookingLink})*`,
+        agentLabel: "Zwei Termine Vormittag",
+        agentThinking: [
+          { phase: "Präferenz erhalten", content: "Lead: Vormittags, nächste Woche. Kalender-Abgleich → 2 freie Slots Dienstag 09:30 und Donnerstag 10:00.", highlight: true },
+          { phase: "Buchungsfluss", content: "2 konkrete Optionen präsentieren. Nach Wahl: Kalendereinladung versenden. Booking-Link als Fallback." },
+        ],
+        nextState: "booked",
+        triggerBooking: false,
+        closeConversation: false,
+      };
+
+    case "scheduling_afternoon":
+      return {
+        leadText: `Nachmittags wäre mir lieber, diese Woche wenn noch etwas frei ist.`,
+        agentMsg: short
+          ? `Perfekt ${p.firstName}! Zwei Optionen diese Woche Nachmittag:\n• Mittwoch, 14:00–14:20\n• Freitag, 15:30–15:50\n\nWelche passt Ihnen?`
+          : `Gut, ${p.firstName} – ich habe diese Woche Nachmittag noch zwei freie Slots:\n\n• **Mittwoch, ${new Date(Date.now() + 2*86400000).toLocaleDateString("de-CH", {day:"2-digit",month:"2-digit"})}, 14:00–14:20 Uhr**\n• **Freitag, ${new Date(Date.now() + 4*86400000).toLocaleDateString("de-CH", {day:"2-digit",month:"2-digit"})}, 15:30–15:50 Uhr**\n\nWelcher Termin passt Ihnen besser? Nach Ihrer Bestätigung bekommen Sie sofort eine Kalendereinladung.\n\n*(Alternativ: direkt selbst buchen unter ${ctx.bookingLink})*`,
+        agentLabel: "Zwei Termine Nachmittag",
+        agentThinking: [
+          { phase: "Präferenz erhalten", content: "Lead: Nachmittags, diese Woche. Kalender-Abgleich → 2 freie Slots Mittwoch 14:00 und Freitag 15:30.", highlight: true },
+          { phase: "Buchungsfluss", content: "2 konkrete Optionen präsentieren. Nach Wahl: Kalendereinladung versenden. Booking-Link als Fallback." },
+        ],
+        nextState: "booked",
+        triggerBooking: false,
+        closeConversation: false,
+      };
+
+    // ── OBJECTION HANDLING ─────────────────────────────────────────────────────
+
+    case "objects_price":
+      return {
+        leadText: `Das klingt alles gut, aber ehrlich gesagt – das Budget ist bei uns gerade ein Thema. Ich glaube, das ist für uns zu teuer.`,
+        agentMsg: short
+          ? `Das verstehe ich ${p.firstName}. Kurze Frage: Was wäre ein Ergebnis, das den Preis rechtfertigen würde? Dann kann ich zeigen ob das realistisch ist.`
+          : `Das ist eine faire Frage, ${p.firstName} – und ich schätze die Direktheit.\n\nBevor ich Ihnen Zahlen nenne: Es hängt sehr davon ab, was das konkret für ${p.company || "Ihr Team"} einbringen würde.\n\nEine Frage: Wie viele reaktivierbare Leads haben Sie aktuell ungefähr in der Pipeline, die keine Antwort bekommen haben?\n\nDer Grund: Wenn jeder dieser Leads nur 10% Wahrscheinlichkeit hat, doch noch zu konvertieren – wird die Rechnung sehr schnell positiv. Ich möchte das nicht abstrakt behaupten, sondern Ihnen anhand Ihrer Zahlen zeigen.\n\nWäre das ein sinnvoller Ansatz?`,
+        agentLabel: "ROI-Argumentation statt Preisvertheidigung",
+        agentThinking: [
+          { phase: "Preiseinwand erkannt", content: "Lead bringt Budget-Einwand. Klassische Reaktion wäre: Preis erklären oder Rabatt anbieten. Besser: ROI-Konversation eröffnen.", highlight: true },
+          { phase: "Strategie", content: "Nicht verteidigen, nicht nachgeben. Stattdessen: Gegenfrage zum erwarteten Ergebnis → dann ROI-Rechnung mit eigenen Zahlen des Leads aufstellen. Preiseinwand wird zu Wert-Gespräch." },
+          { phase: "Nächster Schritt", content: "Lead soll seine Zahlen nennen (Anzahl Leads). Danach: konkrete ROI-Hochrechnung. Termin = Ort um das gemeinsam durchzurechnen." },
+        ],
+        nextState: "interested",
+        triggerBooking: false,
+        closeConversation: false,
+      };
+
+    case "objects_time":
+      return {
+        leadText: `Grundsätzlich interessant – aber im Moment haben wir gerade zu viel auf dem Tisch. Das ist jetzt nicht der richtige Zeitpunkt.`,
+        agentMsg: short
+          ? `Das verstehe ich ${p.firstName}. Darf ich fragen: Wann wäre ein besserer Zeitpunkt? Ich melde mich dann nochmals.`
+          : `Das kenne ich – und ich respektiere das vollständig, ${p.firstName}.\n\nNur eine kurze Gegenfrage: Was müsste sich ändern, damit der Zeitpunkt passt? Ist es ein Projekt, das abgeschlossen wird? Ein Quartal, das sich beruhigt?\n\nIch frage nicht, um Druck zu machen – sondern weil ich gerne genau dann wieder melde, wenn es Sinn macht. Nicht vorher.\n\nFalls Sie mir einen ungefähren Zeitraum nennen können – 4 Wochen, 2 Monate, nach dem Sommer? Dann setze ich das in meinen Kalender und melde mich erst dann wieder.`,
+        agentLabel: "Timing-Einwand qualifizieren",
+        agentThinking: [
+          { phase: "Timing-Einwand erkannt", content: "Lead hat Interesse, aber falsches Timing. Wichtig: unterscheiden zwischen 'echtem Timing-Problem' und 'höflichem Nein'.", highlight: true },
+          { phase: "Strategie", content: "Frage nach dem konkreten Auslöser: Was ändert sich wann? So bekommt man einen echten Nachfasstermin — kein leeres 'melde ich mich später'." },
+          { phase: "Nächster Schritt", content: "Konkrete Zeitangabe einholen (z.B. +6 Wochen). Dann: snoozen und zum vereinbarten Datum erneut kontaktieren." },
+        ],
+        nextState: "closed",
+        triggerBooking: false,
+        closeConversation: true,
+      };
+
+    case "objects_trust":
+      return {
+        leadText: `Klingt gut auf dem Papier – aber woher weiss ich, dass das wirklich funktioniert? Das haben wir schon mit anderen Tools versucht.`,
+        agentMsg: short
+          ? `Das ist eine völlig berechtigte Frage ${p.firstName}. Darf ich fragen, was bei den anderen Tools nicht funktioniert hat? Dann kann ich sagen ob wir das anders lösen – oder nicht.`
+          : `Das ist eine völlig berechtigte Frage – und ich nehme sie ernst, ${p.firstName}.\n\n«Das haben wir schon versucht» bedeutet meistens: Das Tool hat versprochen, was Sie brauchten, aber in der Praxis nicht geliefert. Stimmt das?\n\nIch möchte keine Versprechen machen, die ich nicht halten kann. Deshalb direkt: Was genau hat bei den früheren Lösungen nicht funktioniert? War es die Personalisierung, die Delivery, der Aufwand bei der Einrichtung – oder etwas anderes?\n\nJe nachdem, was Sie mir sagen, werde ich Ihnen entweder zeigen, wie wir das konkret anders lösen – oder ich sage Ihnen ehrlich, wenn ich nicht glaube, dass wir das besser können.`,
+        agentLabel: "Vertrauen aufbauen durch Ehrlichkeit",
+        agentThinking: [
+          { phase: "Vertrauenseinwand erkannt", content: "Lead hat negative Erfahrungen mit ähnlichen Lösungen. Kein Gegenargument bringt hier etwas — Glaubwürdigkeit muss verdient werden.", highlight: true },
+          { phase: "Strategie", content: "Einwand ernst nehmen, nicht wegdiskutieren. Nachfragen was konkret nicht funktioniert hat → dann ehrlich bewerten ob wir das besser können oder nicht. Ehrlichkeit > Verkaufsrhetorik." },
+          { phase: "Nächster Schritt", content: "Lead nennt konkreten Failure Point → wir können zeigen wie wir das spezifisch anders lösen (oder zugeben wenn nicht). Schafft echtes Vertrauen." },
+        ],
+        nextState: "interested",
+        triggerBooking: false,
+        closeConversation: false,
+      };
+
+    case "objects_competitor":
+      return {
+        leadText: `Wir schauen uns gerade auch noch andere Anbieter an. Ich will das erst vergleichen bevor ich eine Entscheidung treffe.`,
+        agentMsg: short
+          ? `Das ist sinnvoll ${p.firstName}! Was sind Ihre wichtigsten Kriterien beim Vergleich? Dann kann ich sagen wo wir uns unterscheiden – ohne Überzeugungsrhetorik.`
+          : `Das ist absolut verständlich, ${p.firstName} – und ich würde dasselbe tun.\n\nEine Frage, die den Vergleich einfacher macht: Was sind Ihre zwei oder drei wichtigsten Kriterien? Also was muss eine Lösung unbedingt leisten, damit Sie sie ernsthaft in Betracht ziehen?\n\nDer Grund: Wir sind bewusst nicht für jeden geeignet. Bei manchen Anforderungen sind andere Anbieter besser. Bei anderen – vor allem wenn es um hyper-personalisierte, multi-turn Reaktivierung geht – ist unser Ansatz schwer zu schlagen.\n\nWenn ich weiss, was Ihnen wichtig ist, kann ich Ihnen einen ehrlichen Vergleich geben – ohne Marketing-Sprache.`,
+        agentLabel: "Kriterien-geleiteter Vergleich",
+        agentThinking: [
+          { phase: "Konkurrenz-Situation erkannt", content: "Lead evaluiert mehrere Anbieter. Falsche Reaktion: eigene Vorteile auflisten. Richtige Reaktion: Entscheidungskriterien des Leads herausfinden.", highlight: true },
+          { phase: "Strategie", content: "Nicht gegen Konkurrenz argumentieren — das wirkt defensiv. Stattdessen: Kriterien des Leads erfragen → dann selektiv auf unsere Stärken eingehen → Schwächen ehrlich zugeben. Positionierung durch Klarheit statt Versprechen." },
+          { phase: "Nächster Schritt", content: "Lead nennt Kriterien → wir können zeigen wo wir stark sind und ehrlich sein wo nicht. Schafft Vertrauen im Vergleich." },
+        ],
+        nextState: "interested",
+        triggerBooking: false,
+        closeConversation: false,
+      };
+
     default:
       return {
         leadText: "Interessant, erzählen Sie mir mehr.",
-        agentMsg: `Gerne! Darf ich kurz fragen: passt Anfang oder Mitte der Woche für ein kurzes Gespräch?`,
+        agentMsg: `Gerne! Darf ich kurz fragen: Was ist aktuell die grösste Herausforderung bei ${ctx.painPoint}${co}?`,
         agentLabel: "Weiterführen",
         agentThinking: [],
         nextState: "interested",
-        triggerBooking: true,
+        triggerBooking: false,
         closeConversation: false,
       };
   }

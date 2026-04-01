@@ -1,5 +1,6 @@
 "use client";
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   type Channel, type ConversationState, type ResponseType, type ContinuationType,
   type LeadProfile, type MessageVariation, type AgentThinkingStep,
@@ -178,7 +179,34 @@ function ScoreBar({ value, max = 100, color = "bg-violet-500" }: { value: number
 
 // ─── COMPONENT ────────────────────────────────────────────────────────────────
 
-export default function SimulationPage() {
+function SimulationPageInner() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const fromLeads = searchParams.get("from") === "leads";
+
+  // Handover lead from Reaktivierung (leads/new → Test Lab)
+  const [handoverLead, setHandoverLead] = useState<{
+    normalized: Record<string, string>;
+    ctx: BusinessContext;
+    channel: Channel;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!fromLeads) return;
+    try {
+      const raw = localStorage.getItem("roya_test_lead");
+      if (raw) {
+        const data = JSON.parse(raw);
+        setHandoverLead(data);
+        setChannel(data.channel || "email");
+        setCtx(data.ctx || DEFAULT_CONTEXT);
+        // Mark mode as "handover" — no demo/CSV needed
+        setSetupMode("demo"); // stays demo-like but lead is injected
+      }
+    } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Setup State
   const [phase, setPhase] = useState<SimPhase>("setup");
   const [setupMode, setSetupMode] = useState<SetupMode>("demo");
@@ -222,6 +250,7 @@ export default function SimulationPage() {
   }, []);
 
   const getAvailableLeads = (): Record<string, string>[] => {
+    if (handoverLead) return [handoverLead.normalized];
     if (setupMode === "csv" && csvParsed) {
       return csvParsed.rows.slice(0, 5).map(row => {
         const norm: Record<string, string> = {};
@@ -346,7 +375,7 @@ export default function SimulationPage() {
   };
 
   const handleContinuation = async (type: ContinuationType) => {
-    if (!profile || !activeResponseType) return;
+    if (!profile) return;
     cancelRef.current = false;
     setIsProcessing(true);
     setShowContinuationButtons(false);
@@ -357,7 +386,7 @@ export default function SimulationPage() {
 
     if (result.leadText) {
       addMsg({ role: "lead", content: result.leadText, state: convState });
-    } else {
+    } else if (type !== "scheduling_morning" && type !== "scheduling_afternoon") {
       addMsg({ role: "system", content: "(Keine Antwort nach weiteren 5 Tagen)", state: convState });
     }
 
@@ -371,6 +400,13 @@ export default function SimulationPage() {
     addMsg({ role: "agent", content: result.agentMsg, subject: result.agentSubject, state: result.nextState, variationLabel: result.agentLabel });
     setConvState(result.nextState);
 
+    // Scheduling preference selected → show slot confirmation
+    if (type === "scheduling_morning" || type === "scheduling_afternoon") {
+      addMsg({ role: "system", content: "2 konkrete Terminoptionen vorgeschlagen · Lead wählt einen Slot", state: "booked" });
+      setIsProcessing(false);
+      return;
+    }
+
     if (result.triggerBooking) {
       await sleep(600);
       if (cancelRef.current) return;
@@ -383,10 +419,15 @@ export default function SimulationPage() {
     } else {
       const nextRound = continuationRound + 1;
       setContinuationRound(nextRound);
-      const moreOpts = getContinuationOptions(activeResponseType, nextRound);
-      if (moreOpts.length > 0) {
+      // For discovery rounds, use convState-aware option lookup
+      const nextOpts = result.nextState === "booking"
+        ? getContinuationOptions("booking", 0)
+        : activeResponseType
+          ? getContinuationOptions(activeResponseType, nextRound)
+          : [];
+      if (nextOpts.length > 0) {
         setShowContinuationButtons(true);
-        addMsg({ role: "system", content: "Wie antwortet der Lead?", state: result.nextState });
+        addMsg({ role: "system", content: result.nextState === "booking" ? "Terminpräferenz abgefragt · Vormittag oder Nachmittag?" : "Wie antwortet der Lead?", state: result.nextState });
       }
       setIsProcessing(false);
     }
@@ -401,8 +442,11 @@ export default function SimulationPage() {
     setThinking(prev => [...prev, ...bookingThinking]);
     await sleep(900);
     const bMsgs = generateBookingMessages(profile, channel, ctx);
+    // First booking message asks for scheduling preference
     addMsg({ role: "agent", content: bMsgs[0].body, subject: bMsgs[0].subject, state: "booking", variationLabel: bMsgs[0].label });
-    addMsg({ role: "system", content: "Terminbuchung eingeleitet · Bestätigen oder ablehnen?", state: "booking" });
+    addMsg({ role: "system", content: "Terminpräferenz abgefragt · Vormittag oder Nachmittag?", state: "booking" });
+    // Show scheduling preference buttons
+    setShowContinuationButtons(true);
     setIsProcessing(false);
   };
 
@@ -440,6 +484,12 @@ export default function SimulationPage() {
     return (
       <div className="p-8 max-w-[920px]">
         <div className="mb-6">
+          {fromLeads && (
+            <button onClick={() => router.push("/dashboard/leads/new")}
+              className="text-sm text-slate-400 hover:text-slate-700 transition-colors flex items-center gap-1 mb-4">
+              ← Zurück zur Kampagne
+            </button>
+          )}
           <h1 className="text-2xl font-bold text-slate-900">Test Agent Flow</h1>
           <p className="text-slate-400 text-sm mt-1">
             Testen Sie die Reaktivierungs-Engine live — dieselbe Engine wie in der Produktion.
@@ -505,6 +555,27 @@ export default function SimulationPage() {
             {/* Lead Selection */}
             <div className="glass-card p-5">
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Lead auswählen</p>
+              {handoverLead && (() => {
+                const p = buildLeadProfile(handoverLead.normalized, 1, ctx);
+                const m = SEGMENT_META[p.segment];
+                return (
+                  <div className="mb-3 p-3 rounded-xl bg-violet-50 border border-violet-200">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-[10px] font-bold text-violet-600 bg-violet-100 px-2 py-0.5 rounded-full">Aus Reaktivierung</span>
+                    </div>
+                    <div className="flex items-center gap-2.5 mt-2">
+                      <div className={`w-8 h-8 rounded-lg ${m.bg} border ${m.border} flex items-center justify-center shrink-0`}>
+                        <span className={`text-xs ${m.color}`}>◉</span>
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold text-slate-800">{p.fullName}</p>
+                        <p className="text-[11px] text-slate-500">{p.jobTitle}{p.company ? ` · ${p.company}` : ""}</p>
+                      </div>
+                      <span className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full border ${m.bg} ${m.border} ${m.color}`}>{m.label}</span>
+                    </div>
+                  </div>
+                );
+              })()}
               <div className="space-y-2">
                 {leads.map((l, i) => {
                   const p = buildLeadProfile(l, i + 1, ctx);
@@ -765,10 +836,17 @@ export default function SimulationPage() {
                   </div>
                 </div>
                 <div className="flex gap-2 shrink-0">
-                  <button onClick={resetSimulation}
-                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-medium rounded-xl transition-colors">
-                    ← Zurück
-                  </button>
+                  {fromLeads ? (
+                    <button onClick={() => router.push("/dashboard/leads/new")}
+                      className="px-4 py-2 bg-violet-50 hover:bg-violet-100 border border-violet-200 text-violet-600 text-xs font-medium rounded-xl transition-colors">
+                      ← Kampagne
+                    </button>
+                  ) : (
+                    <button onClick={resetSimulation}
+                      className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-medium rounded-xl transition-colors">
+                      ← Zurück
+                    </button>
+                  )}
                   <button onClick={proceedToChat}
                     className="px-5 py-2 bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold rounded-xl transition-all shadow-md shadow-violet-200 flex items-center gap-1.5">
                     Chat starten →
@@ -1026,9 +1104,15 @@ export default function SimulationPage() {
 
         {/* Bottom Actions */}
         <div className="p-3 border-t border-slate-200 space-y-2 shrink-0">
+          {fromLeads && (
+            <button onClick={() => router.push("/dashboard/leads/new")}
+              className="w-full py-2 bg-violet-50 hover:bg-violet-100 border border-violet-200 text-violet-600 text-xs font-medium rounded-xl transition-colors">
+              ← Zurück zur Kampagne
+            </button>
+          )}
           <button onClick={resetSimulation}
             className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-medium rounded-xl transition-colors">
-            ← Neue Simulation
+            ↺ Neue Simulation
           </button>
         </div>
       </div>
@@ -1167,15 +1251,26 @@ export default function SimulationPage() {
             </div>
           )}
 
-          {/* Round 2+: Continuation Buttons */}
-          {showContinuationButtons && !isProcessing && activeResponseType && (() => {
-            const opts = getContinuationOptions(activeResponseType, continuationRound);
+          {/* Continuation Buttons — discovery rounds + scheduling preference */}
+          {showContinuationButtons && !isProcessing && (() => {
+            // In booking state: show scheduling preference options
+            const opts = convState === "booking"
+              ? getContinuationOptions("booking", 0)
+              : activeResponseType
+                ? getContinuationOptions(activeResponseType, continuationRound)
+                : [];
             if (opts.length === 0) return null;
+            const isScheduling = convState === "booking";
             return (
-              <div className="bg-white border border-violet-200 rounded-2xl p-4 shadow-md">
+              <div className={`bg-white border rounded-2xl p-4 shadow-md ${isScheduling ? "border-emerald-200" : "border-violet-200"}`}>
                 <div className="flex items-center gap-2 mb-3">
-                  <span className="w-5 h-5 rounded-full bg-violet-100 border border-violet-200 flex items-center justify-center text-[10px] font-bold text-violet-600">{continuationRound + 1}</span>
-                  <p className="text-xs font-semibold text-slate-700">{profile?.firstName} antwortet weiter:</p>
+                  {isScheduling
+                    ? <span className="w-5 h-5 rounded-full bg-emerald-100 border border-emerald-200 flex items-center justify-center text-[10px]">📅</span>
+                    : <span className="w-5 h-5 rounded-full bg-violet-100 border border-violet-200 flex items-center justify-center text-[10px] font-bold text-violet-600">{continuationRound + 1}</span>
+                  }
+                  <p className="text-xs font-semibold text-slate-700">
+                    {isScheduling ? `${profile?.firstName} teilt Terminpräferenz mit:` : `${profile?.firstName} antwortet weiter:`}
+                  </p>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   {opts.map((opt) => (
@@ -1187,15 +1282,25 @@ export default function SimulationPage() {
                     </button>
                   ))}
                 </div>
+                {isScheduling && (
+                  <button onClick={() => {
+                    addMsg({ role: "lead", content: "Leider passt das gerade nicht. Vielleicht ein anderes Mal.", state: "booking" });
+                    addMsg({ role: "system", content: "Termin abgelehnt · Konversation beendet", state: "closed" });
+                    setConvState("closed");
+                    setShowContinuationButtons(false);
+                  }} className="mt-2 w-full py-2 bg-slate-50 hover:bg-slate-100 text-slate-500 text-[11px] font-medium rounded-xl transition-all border border-slate-200">
+                    ✗ Kein passender Termin
+                  </button>
+                )}
               </div>
             );
           })()}
 
-          {/* Booking Confirmation */}
-          {convState === "booking" && !isProcessing && (
-            <div className="bg-white border border-violet-200 rounded-2xl p-4 shadow-md">
+          {/* Booking slot confirmation — shown after scheduling preference selected */}
+          {convState === "booked" && messages.some(m => m.state === "booked" && m.role === "agent") && !isProcessing && (
+            <div className="bg-white border border-emerald-200 rounded-2xl p-4 shadow-md">
               <p className="text-xs font-semibold text-slate-700 mb-3">
-                {profile?.firstName} reagiert auf den Terminvorschlag:
+                {profile?.firstName} bestätigt den Termin:
               </p>
               <div className="flex gap-2">
                 <button onClick={confirmBooking}
@@ -1203,12 +1308,12 @@ export default function SimulationPage() {
                   ✓ Termin bestätigen
                 </button>
                 <button onClick={() => {
-                  addMsg({ role: "lead", content: "Leider passt das gerade nicht. Vielleicht ein anderes Mal.", state: "booking" });
-                  addMsg({ role: "system", content: "Termin abgelehnt · Konversation beendet", state: "closed" });
-                  setConvState("closed");
+                  addMsg({ role: "lead", content: "Leider passt keiner der Termine. Können Sie andere vorschlagen?", state: "booked" });
+                  addMsg({ role: "system", content: "Leads bittet um andere Termine", state: "booking" });
+                  setConvState("booking");
                 }}
                   className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-medium rounded-xl transition-all">
-                  ✗ Ablehnen
+                  Andere Termine
                 </button>
               </div>
             </div>
@@ -1238,4 +1343,8 @@ export default function SimulationPage() {
       </div>
     </div>
   );
+}
+
+export default function SimulationPage() {
+  return <Suspense><SimulationPageInner /></Suspense>;
 }

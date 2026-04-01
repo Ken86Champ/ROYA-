@@ -6,7 +6,27 @@ export default function NewClientPage() {
   const router = useRouter();
   const [form, setForm] = useState({ company: "", contact: "", email: "", phone: "", industry: "", notes: "" });
   const [saved, setSaved] = useState(false);
-  const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); setSaved(true); setTimeout(() => router.push("/dashboard/clients"), 1200); };
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      const res = await fetch("/api/clients", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+      if (!res.ok) throw new Error("Fehler beim Speichern");
+      setSaved(true);
+      setTimeout(() => router.push("/dashboard/clients"), 1200);
+    } catch {
+      setError("Speichern fehlgeschlagen. Bitte versuchen Sie es erneut.");
+      setSaving(false);
+    }
+  };
   const inp = "w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-slate-800 text-sm placeholder-slate-300 focus:outline-none focus:border-violet-400 transition-colors";
 
   return (
@@ -43,9 +63,10 @@ export default function NewClientPage() {
           <h2 className="text-sm font-semibold text-slate-700 mb-3">Notizen</h2>
           <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Interne Notizen..." rows={3} className={`${inp} resize-none`} />
         </div>
-        <button type="submit" disabled={!form.company || !form.email || saved}
+        {error && <p className="text-xs text-red-500 text-center">{error}</p>}
+        <button type="submit" disabled={!form.company || !form.email || saved || saving}
           className={`w-full py-3 rounded-xl text-sm font-medium transition-all text-white ${saved ? "bg-emerald-500" : "bg-violet-600 hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed"}`}>
-          {saved ? "✓ Gespeichert — Weiterleitung..." : "Endkunde erstellen"}
+          {saved ? "✓ Gespeichert — Weiterleitung..." : saving ? "Wird gespeichert…" : "Endkunde erstellen"}
         </button>
       </form>
     </div>

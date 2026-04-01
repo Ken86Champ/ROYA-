@@ -1,6 +1,12 @@
 "use client";
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
+
+interface ConnectedCalendar {
+  key: string; title: string; icon: string;
+  bg: string; border: string; color: string;
+  bookingUrl: string;
+}
 import {
   type Channel, type LeadProfile, type MessageVariation, type BusinessContext,
   DEFAULT_CONTEXT, SEGMENT_META, STATE_META,
@@ -75,24 +81,36 @@ const STEPS = [
   { n: 3, label: "Kontext" }, { n: 4, label: "Analyse" }, { n: 5, label: "Kampagne" },
 ];
 
-function StepBar({ current }: { current: Step }) {
+function StepBar({ current, maxReached, onNavigate }: {
+  current: Step;
+  maxReached: Step;
+  onNavigate: (s: Step) => void;
+}) {
   return (
     <div className="flex items-center gap-0 mb-8">
-      {STEPS.map((s, i) => (
-        <div key={s.n} className="flex items-center">
-          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-sm font-medium transition-all ${
-            s.n === current ? "bg-violet-600 text-white shadow-md shadow-violet-200" :
-            s.n < current  ? "bg-violet-50 text-violet-600" : "text-slate-400"
-          }`}>
-            <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${
-              s.n === current ? "bg-white/20 text-white" :
-              s.n < current  ? "bg-violet-200 text-violet-700" : "bg-slate-100 text-slate-400"
-            }`}>{s.n < current ? "✓" : s.n}</span>
-            {s.label}
+      {STEPS.map((s, i) => {
+        const clickable = s.n !== current && s.n <= maxReached;
+        return (
+          <div key={s.n} className="flex items-center">
+            <button
+              disabled={!clickable && s.n !== current}
+              onClick={() => clickable && onNavigate(s.n as Step)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-sm font-medium transition-all ${
+                s.n === current ? "bg-violet-600 text-white shadow-md shadow-violet-200" :
+                s.n < current   ? "bg-violet-50 text-violet-600 hover:bg-violet-100 cursor-pointer" :
+                s.n <= maxReached ? "bg-slate-100 text-slate-500 hover:bg-slate-200 cursor-pointer" :
+                "text-slate-300 cursor-not-allowed"
+              }`}>
+              <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${
+                s.n === current ? "bg-white/20 text-white" :
+                s.n < current   ? "bg-violet-200 text-violet-700" : "bg-slate-200 text-slate-400"
+              }`}>{s.n < current ? "✓" : s.n}</span>
+              {s.label}
+            </button>
+            {i < STEPS.length - 1 && <div className={`w-6 h-[2px] mx-1 ${s.n < current ? "bg-violet-300" : "bg-slate-200"}`} />}
           </div>
-          {i < STEPS.length - 1 && <div className={`w-6 h-[2px] mx-1 ${s.n < current ? "bg-violet-300" : "bg-slate-200"}`} />}
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -104,6 +122,12 @@ export default function LeadsNewPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const [step, setStep] = useState<Step>(1);
+  const [maxStep, setMaxStep] = useState<Step>(1);
+
+  const goToStep = (s: Step) => {
+    setStep(s);
+    if (s > maxStep) setMaxStep(s);
+  };
 
   // Step 1
   const [file, setFile] = useState<File | null>(null);
@@ -113,8 +137,38 @@ export default function LeadsNewPage() {
   // Step 2
   const [mappings, setMappings] = useState<{ csvColumn: string; standardField: string }[]>([]);
 
-  // Step 3
-  const [ctx, setCtx] = useState<BusinessContext>(DEFAULT_CONTEXT);
+  // Calendars from Settings
+  const [connectedCalendars, setConnectedCalendars] = useState<ConnectedCalendar[]>([]);
+  const [selectedCalendarKey, setSelectedCalendarKey] = useState<string>("manual");
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("roya_calendars") || "[]") as ConnectedCalendar[];
+      setConnectedCalendars(saved);
+      if (saved.length > 0) {
+        // Auto-select first connected calendar if bookingLink not yet set
+        setSelectedCalendarKey(saved[0].key);
+      }
+    } catch {}
+  }, []);
+
+  // Step 3 — persisted in localStorage
+  const [ctx, setCtx] = useState<BusinessContext>(() => {
+    if (typeof window === "undefined") return DEFAULT_CONTEXT;
+    try {
+      const saved = localStorage.getItem("roya_business_context");
+      if (saved) return { ...DEFAULT_CONTEXT, ...JSON.parse(saved) };
+    } catch {}
+    return DEFAULT_CONTEXT;
+  });
+
+  const updateCtx = useCallback((patch: Partial<BusinessContext>) => {
+    setCtx(prev => {
+      const next = { ...prev, ...patch };
+      try { localStorage.setItem("roya_business_context", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
 
   // Step 4
   const [leads, setLeads] = useState<AnalyzedLead[]>([]);
@@ -122,10 +176,67 @@ export default function LeadsNewPage() {
   const [selectedLeadId, setSelectedLeadId] = useState<number | null>(null);
 
   // Step 5
-  const [channel, setChannel] = useState<Channel>("email");
+  const [channel, setChannel] = useState<Channel>(() => {
+    if (typeof window === "undefined") return "email";
+    return (localStorage.getItem("roya_channel") as Channel) || "email";
+  });
+
+  const updateChannel = (ch: Channel) => {
+    setChannel(ch);
+    try { localStorage.setItem("roya_channel", ch); } catch {}
+  };
   const [selectedInitial, setSelectedInitial] = useState<MessageVariation | null>(null);
   const [activeResponseState, setActiveResponseState] = useState<string>("initial");
   const [showReasoning, setShowReasoning] = useState(false);
+
+  // Live Test Modal
+  const [testModal, setTestModal] = useState<{ open: boolean; message: string; subject: string }>({ open: false, message: "", subject: "" });
+  const [testTarget, setTestTarget] = useState("");
+  const [testSent, setTestSent] = useState(false);
+
+  const openTestModal = (msg: string, subject: string) => {
+    setTestModal({ open: true, message: msg, subject });
+    setTestSent(false);
+    setTestTarget("");
+    setTestError("");
+  };
+
+  const [testSending, setTestSending] = useState(false);
+  const [testError, setTestError] = useState("");
+
+  const sendTest = async () => {
+    if (!testTarget.trim()) return;
+    setTestError("");
+    if (channel === "email") {
+      const subj = encodeURIComponent(testModal.subject || "Test-Nachricht von ROYA");
+      const body = encodeURIComponent(testModal.message);
+      window.open(`mailto:${testTarget}?subject=${subj}&body=${body}`, "_blank");
+      setTestSent(true);
+      return;
+    }
+    // SMS / WhatsApp via Twilio API route
+    let twilio = { accountSid: "", authToken: "", from: "" };
+    try { twilio = JSON.parse(localStorage.getItem("roya_twilio") || "{}"); } catch {}
+    if (!twilio.accountSid || !twilio.authToken || !twilio.from) {
+      setTestError("Twilio-Zugangsdaten fehlen. Bitte in den Einstellungen konfigurieren.");
+      return;
+    }
+    setTestSending(true);
+    try {
+      const res = await fetch("/api/test-send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channel, to: testTarget, body: testModal.message, ...twilio }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setTestError(data.error || "Fehler beim Senden."); }
+      else { setTestSent(true); }
+    } catch {
+      setTestError("Netzwerkfehler. Bitte erneut versuchen.");
+    } finally {
+      setTestSending(false);
+    }
+  };
 
   // ── File ──
   const handleFile = useCallback((f: File) => {
@@ -141,12 +252,24 @@ export default function LeadsNewPage() {
     reader.readAsText(f, "UTF-8");
   }, []);
 
-  // ── Analyze ──
-  const runAnalysis = () => {
+  // ── Analyze (chunked — non-blocking for large CSVs) ──
+  const [analyzeProgress, setAnalyzeProgress] = useState({ done: 0, total: 0 });
+
+  const runAnalysis = useCallback(() => {
     if (!parsed) return;
+    const CHUNK = 50;
+    const rows = parsed.rows;
+    const total = rows.length;
     setAnalyzing(true);
-    setTimeout(() => {
-      const result: AnalyzedLead[] = parsed.rows.slice(0, 50).map((row, idx) => {
+    setAnalyzeProgress({ done: 0, total });
+    setLeads([]);
+
+    const processChunk = (startIdx: number) => {
+      const end = Math.min(startIdx + CHUNK, total);
+      const chunk: AnalyzedLead[] = [];
+
+      for (let idx = startIdx; idx < end; idx++) {
+        const row = rows[idx];
         const norm: Record<string, string> = {};
         mappings.forEach(({ csvColumn, standardField }) => {
           if (standardField !== "ignore") norm[standardField] = row[csvColumn] || "";
@@ -161,13 +284,27 @@ export default function LeadsNewPage() {
           no_response:    generateStateResponse("no_response",    profile, channel, ctx),
         };
         const bookingMessages = generateBookingMessages(profile, channel, ctx);
-        return { profile, initialMessages, stateResponses, bookingMessages };
+        chunk.push({ profile, initialMessages, stateResponses, bookingMessages });
+      }
+
+      setLeads(prev => {
+        const updated = [...prev, ...chunk];
+        if (startIdx === 0) setSelectedLeadId(updated[0]?.profile.id ?? null);
+        return updated;
       });
-      setLeads(result);
-      setSelectedLeadId(result[0]?.profile.id ?? null);
-      setAnalyzing(false);
-    }, 1800);
-  };
+      setAnalyzeProgress({ done: end, total });
+
+      if (end < total) {
+        // Yield to browser, then continue next chunk
+        setTimeout(() => processChunk(end), 0);
+      } else {
+        setAnalyzing(false);
+      }
+    };
+
+    // Small initial delay so the "Analysiere…" UI renders first
+    setTimeout(() => processChunk(0), 80);
+  }, [parsed, mappings, ctx, channel]);
 
   const selectedAnalyzed = leads.find(l => l.profile.id === selectedLeadId);
   const segCounts = leads.reduce((acc, l) => { acc[l.profile.segment] = (acc[l.profile.segment] || 0) + 1; return acc; }, {} as Record<string, number>);
@@ -193,7 +330,7 @@ export default function LeadsNewPage() {
         <p className="text-slate-400 text-sm mt-1">In 5 Schritten von der CSV zur vollständigen Gesprächsstrategie</p>
       </div>
 
-      <StepBar current={step} />
+      <StepBar current={step} maxReached={maxStep} onNavigate={goToStep} />
 
       {/* ── STEP 1: Upload ── */}
       {step === 1 && (
@@ -226,7 +363,7 @@ export default function LeadsNewPage() {
                   <span className="text-3xl text-violet-300">↑</span>
                 </div>
                 <p className="text-slate-600 font-semibold">CSV hier hineinziehen oder klicken</p>
-                <p className="text-slate-400 text-sm mt-1">.csv, .txt · Bis zu 50 Leads</p>
+                <p className="text-slate-400 text-sm mt-1">.csv, .txt · Unbegrenzte Leads</p>
               </>
             )}
           </div>
@@ -239,7 +376,7 @@ export default function LeadsNewPage() {
             </code>
           </div>
           <div className="flex justify-end mt-6">
-            <button disabled={!parsed} onClick={() => setStep(2)}
+            <button disabled={!parsed} onClick={() => goToStep(2)}
               className="px-6 py-2.5 bg-violet-600 text-white font-semibold rounded-xl disabled:opacity-40 hover:bg-violet-700 transition-all">
               Weiter → Felder zuordnen
             </button>
@@ -308,7 +445,7 @@ export default function LeadsNewPage() {
           </div>
           <div className="flex justify-between">
             <button onClick={() => setStep(1)} className="px-5 py-2.5 text-slate-500 hover:text-slate-800 text-sm font-medium transition-colors">← Zurück</button>
-            <button onClick={() => setStep(3)} className="px-6 py-2.5 bg-violet-600 text-white font-semibold rounded-xl hover:bg-violet-700 transition-all">Weiter → Kontext</button>
+            <button onClick={() => goToStep(3)} className="px-6 py-2.5 bg-violet-600 text-white font-semibold rounded-xl hover:bg-violet-700 transition-all">Weiter → Kontext</button>
           </div>
         </div>
       )}
@@ -328,25 +465,102 @@ export default function LeadsNewPage() {
               { key: "painPoint" as const,       label: "Hauptschmerz des Leads",          span: false, required: false, ph: "z.B. manuelle Follow-ups" },
               { key: "noConvertReason" as const, label: "Warum hat Lead nicht gekauft?",   span: true,  required: false, ph: "z.B. Timing, Budget, falscher Ansprechpartner" },
               { key: "ctaGoal" as const,         label: "CTA / Gewünschte Aktion",         span: false, required: true, ph: "z.B. 20-Min Demo-Gespräch" },
-              { key: "bookingLink" as const,     label: "Booking-Link",                    span: false, required: false, ph: "z.B. https://cal.com/..." },
             ] as const).map(({ key, label, span, required, ph }) => (
               <div key={key} className={span ? "md:col-span-2" : ""}>
                 <label className="block text-sm font-medium text-slate-700 mb-1.5">
                   {label} {required && <span className="text-violet-500">*</span>}
                 </label>
                 <input type="text" value={ctx[key]}
-                  onChange={e => setCtx({ ...ctx, [key]: e.target.value })}
+                  onChange={e => updateCtx({ [key]: e.target.value })}
                   placeholder={ph}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-slate-800 text-sm placeholder-slate-300 focus:outline-none focus:border-violet-400 transition-colors" />
               </div>
             ))}
+
+            {/* ── Booking-Link / Kalender-Picker ── */}
+            <div className="md:col-span-2">
+              <label className="block text-sm font-medium text-slate-700 mb-2">
+                Booking-Link / Kalender
+              </label>
+              <div className="space-y-2">
+                {/* Connected calendars */}
+                {connectedCalendars.map(cal => (
+                  <button
+                    key={cal.key}
+                    type="button"
+                    onClick={() => {
+                      setSelectedCalendarKey(cal.key);
+                      updateCtx({ bookingLink: cal.bookingUrl });
+                    }}
+                    className={`w-full p-3.5 rounded-xl border text-left transition-all flex items-center gap-3 ${
+                      selectedCalendarKey === cal.key
+                        ? `${cal.bg} ${cal.border} shadow-sm`
+                        : "bg-white border-slate-200 hover:border-violet-200"
+                    }`}>
+                    <div className={`w-8 h-8 rounded-lg ${cal.bg} border ${cal.border} flex items-center justify-center shrink-0`}>
+                      <span className={`text-sm ${cal.color}`}>{cal.icon}</span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm font-semibold ${selectedCalendarKey === cal.key ? "text-slate-800" : "text-slate-600"}`}>{cal.title}</p>
+                      <p className={`text-[11px] font-mono truncate ${selectedCalendarKey === cal.key ? cal.color : "text-slate-400"}`}>{cal.bookingUrl || "—"}</p>
+                    </div>
+                    {selectedCalendarKey === cal.key && (
+                      <span className="w-5 h-5 rounded-full bg-violet-600 flex items-center justify-center shrink-0">
+                        <span className="text-white text-[10px] font-bold">✓</span>
+                      </span>
+                    )}
+                  </button>
+                ))}
+
+                {/* Manual input option */}
+                <button
+                  type="button"
+                  onClick={() => setSelectedCalendarKey("manual")}
+                  className={`w-full p-3.5 rounded-xl border text-left transition-all flex items-center gap-3 ${
+                    selectedCalendarKey === "manual"
+                      ? "bg-slate-50 border-slate-300 shadow-sm"
+                      : "bg-white border-slate-200 hover:border-slate-300"
+                  }`}>
+                  <div className="w-8 h-8 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0">
+                    <span className="text-slate-400 text-sm">✎</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-slate-600">Manuell eingeben</p>
+                    <p className="text-[11px] text-slate-400">Eigenen Booking-Link verwenden</p>
+                  </div>
+                  {selectedCalendarKey === "manual" && (
+                    <span className="w-5 h-5 rounded-full bg-slate-600 flex items-center justify-center shrink-0">
+                      <span className="text-white text-[10px] font-bold">✓</span>
+                    </span>
+                  )}
+                </button>
+
+                {selectedCalendarKey === "manual" && (
+                  <input
+                    type="url"
+                    value={ctx.bookingLink}
+                    onChange={e => updateCtx({ bookingLink: e.target.value })}
+                    placeholder="z.B. https://cal.com/..."
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-slate-800 text-sm placeholder-slate-300 focus:outline-none focus:border-violet-400 transition-colors"
+                  />
+                )}
+
+                {connectedCalendars.length === 0 && (
+                  <p className="text-[11px] text-slate-400 pt-1">
+                    Tipp: Verbinden Sie Kalender unter{" "}
+                    <button onClick={() => router.push("/dashboard/settings")} className="text-violet-500 hover:underline font-medium">Einstellungen → Kalender</button>
+                    {" "}für schnelle Auswahl.
+                  </p>
+                )}
+              </div>
+            </div>
           </div>
           {/* Channel */}
           <div className="mt-6">
             <label className="block text-sm font-medium text-slate-700 mb-2">Kanal</label>
             <div className="flex gap-2">
               {(["email", "sms", "whatsapp"] as Channel[]).map(ch => (
-                <button key={ch} onClick={() => setChannel(ch)}
+                <button key={ch} onClick={() => updateChannel(ch)}
                   className={`px-4 py-2 rounded-xl text-sm font-semibold border transition-all ${
                     channel === ch ? "bg-violet-600 text-white border-violet-600" : "bg-slate-50 text-slate-500 border-slate-200 hover:border-violet-200"
                   }`}>
@@ -359,7 +573,7 @@ export default function LeadsNewPage() {
             <button onClick={() => setStep(2)} className="px-5 py-2.5 text-slate-500 hover:text-slate-800 text-sm font-medium transition-colors">← Zurück</button>
             <button
               disabled={!ctx.agentName || !ctx.companyName || !ctx.product || !ctx.ctaGoal}
-              onClick={() => { setStep(4); runAnalysis(); }}
+              onClick={() => { goToStep(4); runAnalysis(); }}
               className="px-6 py-2.5 bg-violet-600 text-white font-semibold rounded-xl disabled:opacity-40 hover:bg-violet-700 transition-all">
               Weiter → Leads analysieren
             </button>
@@ -377,14 +591,33 @@ export default function LeadsNewPage() {
                   <span key={i} className={`w-3 h-3 rounded-full ${c} animate-bounce`} style={{ animationDelay: `${i * 0.15}s` }} />
                 ))}
               </div>
-              <p className="text-slate-700 font-semibold">Leads werden analysiert…</p>
-              <p className="text-slate-400 text-sm mt-1">Profiling · Scoring · Hypothesen · Gesprächsstrategie</p>
+              <p className="text-slate-700 font-semibold mb-1">Leads werden analysiert…</p>
+              <p className="text-slate-400 text-sm mb-5">Profiling · Scoring · Hypothesen · Gesprächsstrategie</p>
+              {analyzeProgress.total > 0 && (
+                <div className="w-64">
+                  <div className="flex justify-between text-xs text-slate-400 mb-1.5">
+                    <span>{analyzeProgress.done} verarbeitet</span>
+                    <span>{analyzeProgress.total} total</span>
+                  </div>
+                  <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-violet-500 to-cyan-500 rounded-full transition-all duration-200"
+                      style={{ width: `${Math.round((analyzeProgress.done / analyzeProgress.total) * 100)}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-slate-300 mt-1.5">
+                    {Math.round((analyzeProgress.done / analyzeProgress.total) * 100)}%
+                  </p>
+                </div>
+              )}
             </div>
           ) : (
             <>
               <div className="flex items-center justify-between mb-5">
                 <div>
-                  <h2 className="text-lg font-semibold text-slate-900">{leads.length} Leads analysiert</h2>
+                  <h2 className="text-lg font-semibold text-slate-900">
+                    {leads.length} {analyzeProgress.total > leads.length ? `/ ${analyzeProgress.total} ` : ""}Leads analysiert
+                  </h2>
                   <p className="text-slate-400 text-sm">Klicken Sie einen Lead an um die Gesprächsstrategie zu sehen</p>
                 </div>
                 <div className="flex gap-2 flex-wrap">
@@ -406,8 +639,8 @@ export default function LeadsNewPage() {
                   const isSelected = selectedLeadId === p.id;
                   return (
                     <div key={p.id}
-                      className={`glass-card p-4 border cursor-pointer transition-all ${isSelected ? "border-violet-400 shadow-md shadow-violet-100" : `${m.border} hover:border-violet-300`}`}
-                      onClick={() => { setSelectedLeadId(p.id); setStep(5); setActiveResponseState("initial"); setSelectedInitial(null); }}>
+                      className={`glass-card p-4 border cursor-pointer transition-all group ${isSelected ? "border-violet-400 shadow-md shadow-violet-100" : `${m.border} hover:border-violet-300`}`}
+                      onClick={() => { setSelectedLeadId(p.id); goToStep(5); setActiveResponseState("initial"); setSelectedInitial(null); }}>
                       <div className="flex items-start gap-4">
                         <div className={`w-10 h-10 rounded-xl ${m.bg} border ${m.border} flex items-center justify-center shrink-0`}>
                           <span className={`text-lg ${m.color}`}>◉</span>
@@ -425,12 +658,24 @@ export default function LeadsNewPage() {
                             ))}
                           </div>
                         </div>
-                        <div className="text-right shrink-0">
-                          <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${m.bg} ${m.border} ${m.color}`}>
-                            <span className={`w-1.5 h-1.5 rounded-full ${m.dot}`} />
-                            {m.label}
-                          </span>
-                          <p className="text-xs text-slate-400 mt-1">Score: {p.score}</p>
+                        <div className="flex items-start gap-3 shrink-0">
+                          <div className="text-right">
+                            <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${m.bg} ${m.border} ${m.color}`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${m.dot}`} />
+                              {m.label}
+                            </span>
+                            <p className="text-xs text-slate-400 mt-1">Score: {p.score}</p>
+                          </div>
+                          <button
+                            onClick={e => {
+                              e.stopPropagation();
+                              setLeads(prev => prev.filter(l => l.profile.id !== p.id));
+                              if (selectedLeadId === p.id) setSelectedLeadId(null);
+                            }}
+                            title="Lead aus Liste entfernen"
+                            className="mt-0.5 w-7 h-7 rounded-lg flex items-center justify-center bg-red-50 border border-red-200 text-red-400 hover:bg-red-100 hover:text-red-600 transition-all">
+                            ✕
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -439,7 +684,7 @@ export default function LeadsNewPage() {
               </div>
               <div className="flex justify-between mt-6">
                 <button onClick={() => setStep(3)} className="px-5 py-2.5 text-slate-500 hover:text-slate-800 text-sm font-medium transition-colors">← Zurück</button>
-                <button onClick={() => setStep(5)} disabled={!selectedLeadId}
+                <button onClick={() => goToStep(5)} disabled={!selectedLeadId}
                   className="px-6 py-2.5 bg-violet-600 text-white font-semibold rounded-xl disabled:opacity-40 hover:bg-violet-700 transition-all">
                   Kampagne aufbauen →
                 </button>
@@ -620,13 +865,40 @@ export default function LeadsNewPage() {
               })()}
 
               {/* CTA Row */}
-              <div className="flex gap-3 mt-6 pt-5 border-t border-slate-200">
+              <div className="flex gap-3 mt-6 pt-5 border-t border-slate-200 flex-wrap">
                 <button className="flex-1 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-semibold hover:bg-violet-700 transition-all">
                   Kampagne starten →
                 </button>
-                <button onClick={() => router.push("/dashboard/simulation")}
+                <button
+                  onClick={() => {
+                    const a = selectedAnalyzed;
+                    const msgs = activeResponseState === "initial" ? a.initialMessages
+                      : activeResponseState === "booking" ? a.bookingMessages
+                      : a.stateResponses[activeResponseState] || [];
+                    const v = msgs[0];
+                    if (v) openTestModal(v.body, v.subject || "");
+                  }}
+                  className="px-4 py-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-100 transition-all flex items-center gap-1.5">
+                  ✉ Live Test senden
+                </button>
+                <button onClick={() => {
+                  if (selectedAnalyzed) {
+                    const p = selectedAnalyzed.profile;
+                    const normalized: Record<string, string> = {
+                      firstName: p.firstName, lastName: p.lastName,
+                      email: p.email, phone: p.phone, company: p.company,
+                      jobTitle: p.jobTitle, industry: p.industry, city: p.city,
+                      lastContact: p.lastContact, dealValue: String(p.dealValue),
+                      notes: p.notes,
+                    };
+                    try {
+                      localStorage.setItem("roya_test_lead", JSON.stringify({ normalized, ctx, channel }));
+                    } catch {}
+                  }
+                  router.push("/dashboard/simulation?from=leads");
+                }}
                   className="px-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-100 transition-all">
-                  Im Test Lab öffnen ↗
+                  Test Lab ↗
                 </button>
               </div>
             </div>
@@ -640,6 +912,89 @@ export default function LeadsNewPage() {
           <button onClick={() => setStep(4)} className="mt-4 px-5 py-2 bg-violet-600 text-white text-sm font-semibold rounded-xl hover:bg-violet-700 transition-all">
             ← Zurück zu Leads
           </button>
+        </div>
+      )}
+
+      {/* ── LIVE TEST MODAL ── */}
+      {testModal.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => setTestModal(m => ({ ...m, open: false }))} />
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6">
+            <div className="flex items-center justify-between mb-5">
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Live Test senden</h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  {channel === "email" ? "E-Mail an Ihre Adresse" : channel === "sms" ? "SMS an Ihre Nummer" : "WhatsApp an Ihre Nummer"}
+                </p>
+              </div>
+              <button onClick={() => setTestModal(m => ({ ...m, open: false }))} className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 text-sm transition-colors">✕</button>
+            </div>
+
+            {testSent ? (
+              <div className="py-8 text-center">
+                <div className="w-14 h-14 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-center mx-auto mb-3">
+                  <span className="text-2xl text-emerald-500">✓</span>
+                </div>
+                <p className="font-semibold text-slate-800 mb-1">
+                  {channel === "email" ? "E-Mail-Client geöffnet" : "Test gesendet"}
+                </p>
+                <p className="text-sm text-slate-400">
+                  {channel === "email"
+                    ? "Prüfen Sie Ihr E-Mail-Programm — die Nachricht ist bereit zum Absenden."
+                    : `Nachricht an ${testTarget} übermittelt.`}
+                </p>
+                <button onClick={() => setTestModal(m => ({ ...m, open: false }))} className="mt-5 px-5 py-2 bg-violet-600 text-white text-sm font-semibold rounded-xl hover:bg-violet-700 transition-all">Schliessen</button>
+              </div>
+            ) : (
+              <>
+                {/* Recipient */}
+                <div className="mb-4">
+                  <label className="text-xs font-semibold text-slate-500 block mb-1.5">
+                    {channel === "email" ? "Test-E-Mail-Adresse" : "Test-Nummer (mit Ländervorwahl)"}
+                  </label>
+                  <input
+                    type={channel === "email" ? "email" : "tel"}
+                    value={testTarget}
+                    onChange={e => setTestTarget(e.target.value)}
+                    placeholder={channel === "email" ? "z.B. you@beispiel.ch" : "z.B. +41 79 123 45 67"}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm text-slate-800 placeholder-slate-300 focus:outline-none focus:border-violet-400 transition-colors"
+                    autoFocus
+                  />
+                </div>
+
+                {/* Message Preview */}
+                <div className="mb-5">
+                  <p className="text-xs font-semibold text-slate-500 mb-1.5">Nachricht</p>
+                  {testModal.subject && (
+                    <div className="px-3 py-1.5 rounded-t-xl bg-violet-50 border border-violet-100">
+                      <span className="text-[10px] text-violet-500 font-semibold">Betreff: </span>
+                      <span className="text-[10px] text-violet-700 font-bold">{testModal.subject}</span>
+                    </div>
+                  )}
+                  <textarea readOnly value={testModal.message}
+                    rows={5}
+                    className={`w-full bg-slate-50 border border-slate-200 text-sm text-slate-600 px-4 py-3 font-mono resize-none focus:outline-none ${testModal.subject ? "rounded-b-xl border-t-0" : "rounded-xl"}`}
+                  />
+                </div>
+
+                {testError && (
+                  <div className="mb-4 p-3 rounded-xl bg-red-50 border border-red-200">
+                    <p className="text-xs text-red-700">{testError}</p>
+                  </div>
+                )}
+
+                <div className="flex gap-2">
+                  <button onClick={() => setTestModal(m => ({ ...m, open: false }))} className="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm font-medium transition-colors">Abbrechen</button>
+                  <button
+                    onClick={sendTest}
+                    disabled={!testTarget.trim() || testSending}
+                    className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white text-sm font-bold transition-all">
+                    {testSending ? "Sende…" : channel === "email" ? "✉ E-Mail öffnen" : channel === "sms" ? "▣ SMS senden" : "◊ WhatsApp senden"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       )}
     </div>

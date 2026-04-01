@@ -29,7 +29,8 @@ export async function processReply(input: {
   calendarUrl?: string;
   contactName?: string;
 }): Promise<ConversationResult> {
-  const response = await client.messages.create({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const response = await (client.messages.create as any)({
     model: "claude-opus-4-6",
     max_tokens: 1024,
     thinking: { type: "adaptive" },
@@ -66,6 +67,7 @@ Antworte als JSON: { intent, nextState, responseMessage, humanHandoff, bookingRe
     ],
   });
 
-  const text = response.content.find(b => b.type === "text")?.text ?? "{}";
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const text = response.content.find((b: any) => b.type === "text")?.text ?? "{}";
   return JSON.parse(text) as ConversationResult;
 }

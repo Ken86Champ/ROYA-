@@ -1,59 +1,75 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
-import { z } from "zod";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-const segmentContactsTool = betaZodTool({
-  name: "segment_contacts",
-  description: "Segmentiert CRM-Kontakte in hot/warm/cold/lost Kategorien",
-  inputSchema: z.object({
-    campaignId: z.string(),
-    clientContext: z.string(),
-  }),
-  run: async ({ campaignId, clientContext }) => {
-    return { success: true, message: `Contacts segmented for campaign ${campaignId}` };
+const tools: Anthropic.Tool[] = [
+  {
+    name: "segment_contacts",
+    description: "Segmentiert CRM-Kontakte in hot/warm/cold/lost Kategorien",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        campaignId:    { type: "string" },
+        clientContext: { type: "string" },
+      },
+      required: ["campaignId", "clientContext"],
+    },
   },
-});
+  {
+    name: "send_initial_outreach",
+    description: "Generiert und sendet personalisierte Erstnachricht an Kontakt",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        contactId: { type: "string" },
+        segment:   { type: "string", enum: ["hot", "warm", "cold", "lost"] },
+        channel:   { type: "string", enum: ["email", "sms", "whatsapp"] },
+      },
+      required: ["contactId", "segment", "channel"],
+    },
+  },
+  {
+    name: "schedule_follow_up",
+    description: "Plant ein automatisches Follow-up für einen Kontakt",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        contactId:  { type: "string" },
+        delayDays:  { type: "number" },
+        channel:    { type: "string", enum: ["email", "sms", "whatsapp"] },
+        step:       { type: "number" },
+      },
+      required: ["contactId", "delayDays", "channel", "step"],
+    },
+  },
+  {
+    name: "mark_contact_booked",
+    description: "Markiert einen Kontakt als gebucht und trackt Revenue",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        contactId:  { type: "string" },
+        dealValue:  { type: "number" },
+      },
+      required: ["contactId"],
+    },
+  },
+];
 
-const sendInitialOutreach = betaZodTool({
-  name: "send_initial_outreach",
-  description: "Generiert und sendet personalisierte Erstnachricht an Kontakt",
-  inputSchema: z.object({
-    contactId: z.string(),
-    segment: z.enum(["hot", "warm", "cold", "lost"]),
-    channel: z.enum(["email", "sms", "whatsapp"]),
-  }),
-  run: async ({ contactId, segment, channel }) => {
-    return { success: true, message: `Outreach sent to ${contactId} via ${channel}` };
-  },
-});
-
-const scheduleFollowUp = betaZodTool({
-  name: "schedule_follow_up",
-  description: "Plant ein automatisches Follow-up für einen Kontakt",
-  inputSchema: z.object({
-    contactId: z.string(),
-    delayDays: z.number(),
-    channel: z.enum(["email", "sms", "whatsapp"]),
-    step: z.number(),
-  }),
-  run: async ({ contactId, delayDays, step }) => {
-    return { success: true, message: `Follow-up step ${step} scheduled for ${contactId} in ${delayDays} days` };
-  },
-});
-
-const markContactBooked = betaZodTool({
-  name: "mark_contact_booked",
-  description: "Markiert einen Kontakt als gebucht und trackt Revenue",
-  inputSchema: z.object({
-    contactId: z.string(),
-    dealValue: z.number().optional(),
-  }),
-  run: async ({ contactId, dealValue }) => {
-    return { success: true, message: `Contact ${contactId} booked. Deal: ${dealValue ?? 0}` };
-  },
-});
+function runTool(name: string, input: Record<string, unknown>): string {
+  switch (name) {
+    case "segment_contacts":
+      return JSON.stringify({ success: true, message: `Contacts segmented for campaign ${input.campaignId}` });
+    case "send_initial_outreach":
+      return JSON.stringify({ success: true, message: `Outreach sent to ${input.contactId} via ${input.channel}` });
+    case "schedule_follow_up":
+      return JSON.stringify({ success: true, message: `Follow-up step ${input.step} scheduled for ${input.contactId} in ${input.delayDays} days` });
+    case "mark_contact_booked":
+      return JSON.stringify({ success: true, message: `Contact ${input.contactId} booked. Deal: ${input.dealValue ?? 0}` });
+    default:
+      return JSON.stringify({ error: "Unknown tool" });
+  }
+}
 
 export async function runCampaignOrchestrator(campaign: {
   id: string;
@@ -64,32 +80,44 @@ export async function runCampaignOrchestrator(campaign: {
   channels: string[];
   calendarUrl?: string;
 }) {
-  const finalMessage = await client.beta.messages.toolRunner({
-    model: "claude-opus-4-6",
-    max_tokens: 4096,
-    thinking: { type: "adaptive" },
-    system: `Du bist der Master-Orchestrator eines autonomen Revenue Reactivation Systems.
+  const messages: Anthropic.MessageParam[] = [{
+    role: "user",
+    content: `Starte Kampagne "${campaign.name}" (ID: ${campaign.id}). ${campaign.totalContacts} Kontakte warten auf Reaktivierung.`,
+  }];
 
+  // Agentic loop — max 10 iterations
+  for (let i = 0; i < 10; i++) {
+    const response = await client.messages.create({
+      model: "claude-opus-4-6",
+      max_tokens: 4096,
+      system: `Du bist der Master-Orchestrator eines autonomen Revenue Reactivation Systems.
 Du koordinierst eine vollautomatische Kampagne für: ${campaign.clientName}
 Angebots-Kontext: ${campaign.clientContext}
 Verfügbare Kanäle: ${campaign.channels.join(", ")}
-${campaign.calendarUrl ? `Kalender für Termine: ${campaign.calendarUrl}` : ""}
+${campaign.calendarUrl ? `Kalender: ${campaign.calendarUrl}` : ""}
+Agiere autonom: Segmentiere → Priorisiere → Sende → Plane Follow-ups → Tracke Buchungen.`,
+      tools,
+      messages,
+    });
 
-Deine Aufgaben:
-1. Segmentiere alle Kontakte
-2. Priorisiere hot > warm > cold > lost
-3. Wähle optimalen Kanal pro Kontakt
-4. Plane Follow-up-Sequenzen (3, 7, 14 Tage)
-5. Tracke Buchungen und Revenue
+    // Append assistant response
+    messages.push({ role: "assistant", content: response.content });
 
-Agiere AUTONOM.`,
-    tools: [segmentContactsTool, sendInitialOutreach, scheduleFollowUp, markContactBooked],
-    messages: [{
-      role: "user",
-      content: `Starte Kampagne "${campaign.name}" (ID: ${campaign.id}).
-${campaign.totalContacts} Kontakte warten auf Reaktivierung.`,
-    }],
-  });
+    if (response.stop_reason === "end_turn") break;
 
-  return finalMessage;
+    if (response.stop_reason === "tool_use") {
+      const toolResults: Anthropic.ToolResultBlockParam[] = response.content
+        .filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use")
+        .map(b => ({
+          type: "tool_result" as const,
+          tool_use_id: b.id,
+          content: runTool(b.name, b.input as Record<string, unknown>),
+        }));
+      messages.push({ role: "user", content: toolResults });
+    } else {
+      break;
+    }
+  }
+
+  return messages;
 }

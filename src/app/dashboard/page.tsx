@@ -1,67 +1,258 @@
 "use client";
+import { useState, useEffect } from "react";
+import Link from "next/link";
 
-const stats = [
-  { label: "Aktive Kontakte", value: "0", trend: "+0%", trendUp: true, icon: "◉", accent: "from-violet-500 to-purple-500", iconBg: "bg-violet-50", iconColor: "text-violet-600" },
-  { label: "Laufende Kampagnen", value: "0", trend: "0 aktiv", trendUp: false, icon: "◎", accent: "from-cyan-500 to-blue-500", iconBg: "bg-cyan-50", iconColor: "text-cyan-600" },
-  { label: "Gebuchte Termine", value: "0", trend: "dieser Monat", trendUp: true, icon: "◇", accent: "from-emerald-500 to-green-500", iconBg: "bg-emerald-50", iconColor: "text-emerald-600" },
-  { label: "Revenue Reaktiviert", value: "CHF 0", trend: "+0%", trendUp: true, icon: "◈", accent: "from-amber-500 to-orange-500", iconBg: "bg-amber-50", iconColor: "text-amber-600" },
-];
+interface Stats {
+  campaigns: {
+    totalCampaigns: number;
+    activeCampaigns: number;
+    totalContacts: number;
+    totalBooked: number;
+    totalReplied: number;
+    avgReplyRate: number;
+  };
+  conversations: {
+    total: number; active: number; replied: number;
+    booked: number; humanNeeded: number;
+  };
+  recentActivity: {
+    id: string; leadName: string; channel: string; state: string;
+    lastActivity: string; lastMessage: string; lastRole: string;
+    intent?: string; intentConf?: number;
+  }[];
+}
+
+const CHANNEL_ICON: Record<string, string> = { email: "✉", sms: "▣", whatsapp: "◊" };
+const STATE_DOT: Record<string, string> = {
+  active: "bg-amber-400", replied: "bg-blue-400",
+  booked: "bg-emerald-500", closed: "bg-slate-300", human_needed: "bg-red-500",
+};
+const STATE_LABEL: Record<string, string> = {
+  active: "Aktiv", replied: "Neu", booked: "Gebucht",
+  closed: "Geschlossen", human_needed: "Eskaliert",
+};
+const INTENT_COLOR: Record<string, string> = {
+  hot: "text-emerald-600", warm: "text-amber-600", cold: "text-red-500",
+  question: "text-blue-600", timing: "text-violet-600",
+};
+
+function timeAgo(iso: string) {
+  const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (diff < 60) return "gerade";
+  if (diff < 3600) return `${Math.floor(diff / 60)}min`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
+  return `${Math.floor(diff / 86400)}d`;
+}
 
 const agentStatus = [
-  { name: "Orchestrator", model: "opus-4-6", icon: "◎", bg: "bg-violet-50", border: "border-violet-100", text: "text-violet-600" },
-  { name: "Segmentierung", model: "haiku-4-5", icon: "◈", bg: "bg-cyan-50", border: "border-cyan-100", text: "text-cyan-600" },
-  { name: "Writer", model: "sonnet-4-6", icon: "✎", bg: "bg-pink-50", border: "border-pink-100", text: "text-pink-600" },
-  { name: "Sleeping Beauty", model: "opus-4-6", icon: "◉", bg: "bg-indigo-50", border: "border-indigo-100", text: "text-indigo-600" },
-  { name: "Booking", model: "haiku-4-5", icon: "◇", bg: "bg-emerald-50", border: "border-emerald-100", text: "text-emerald-600" },
-  { name: "Channel Router", model: "haiku-4-5", icon: "◊", bg: "bg-amber-50", border: "border-amber-100", text: "text-amber-600" },
-  { name: "Analytics", model: "sonnet-4-6", icon: "▣", bg: "bg-teal-50", border: "border-teal-100", text: "text-teal-600" },
+  { name: "Orchestrator",   model: "opus-4-6",   icon: "◎", bg: "bg-violet-50",  border: "border-violet-100",  text: "text-violet-600" },
+  { name: "Segmentierung",  model: "haiku-4-5",  icon: "◈", bg: "bg-cyan-50",    border: "border-cyan-100",    text: "text-cyan-600" },
+  { name: "Writer",         model: "sonnet-4-6", icon: "✎", bg: "bg-pink-50",    border: "border-pink-100",    text: "text-pink-600" },
+  { name: "Sleeping Beauty",model: "opus-4-6",   icon: "◉", bg: "bg-indigo-50",  border: "border-indigo-100",  text: "text-indigo-600" },
+  { name: "Booking",        model: "haiku-4-5",  icon: "◇", bg: "bg-emerald-50", border: "border-emerald-100", text: "text-emerald-600" },
+  { name: "Channel Router", model: "haiku-4-5",  icon: "◊", bg: "bg-amber-50",   border: "border-amber-100",   text: "text-amber-600" },
+  { name: "Analytics",      model: "sonnet-4-6", icon: "▣", bg: "bg-teal-50",    border: "border-teal-100",    text: "text-teal-600" },
 ];
 
 export default function DashboardPage() {
+  const [stats, setStats] = useState<Stats | null>(null);
+
+  useEffect(() => {
+    const load = () =>
+      fetch("/api/stats").then(r => r.json()).then(setStats).catch(() => {});
+    load();
+    const t = setInterval(load, 8000);
+    return () => clearInterval(t);
+  }, []);
+
   const now = new Date();
   const hour = now.getHours();
   const greeting = hour < 12 ? "Guten Morgen" : hour < 18 ? "Guten Tag" : "Guten Abend";
   const dateStr = now.toLocaleDateString("de-CH", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
 
+  const kpis = [
+    {
+      label: "Aktive Kampagnen",
+      value: stats?.campaigns.activeCampaigns ?? 0,
+      sub: `${stats?.campaigns.totalCampaigns ?? 0} total`,
+      icon: "◎", accent: "from-violet-500 to-purple-500",
+      iconBg: "bg-violet-50", iconColor: "text-violet-600",
+      href: "/dashboard/campaigns",
+    },
+    {
+      label: "Kontaktiert",
+      value: stats?.campaigns.totalContacts ?? 0,
+      sub: `${stats?.campaigns.avgReplyRate ?? 0}% Reply-Rate`,
+      icon: "◉", accent: "from-cyan-500 to-blue-500",
+      iconBg: "bg-cyan-50", iconColor: "text-cyan-600",
+      href: "/dashboard/contacts",
+    },
+    {
+      label: "Offene Gespräche",
+      value: (stats?.conversations.active ?? 0) + (stats?.conversations.replied ?? 0),
+      sub: `${stats?.conversations.humanNeeded ?? 0} eskaliert`,
+      icon: "◊", accent: "from-indigo-500 to-violet-500",
+      iconBg: "bg-indigo-50", iconColor: "text-indigo-600",
+      href: "/dashboard/conversations",
+    },
+    {
+      label: "Termine gebucht",
+      value: stats?.campaigns.totalBooked ?? 0,
+      sub: `${stats?.conversations.booked ?? 0} via Agent`,
+      icon: "◇", accent: "from-emerald-500 to-green-500",
+      iconBg: "bg-emerald-50", iconColor: "text-emerald-600",
+      href: "/dashboard/appointments",
+    },
+  ];
+
   return (
-    <div className="p-8 max-w-[1400px]">
+    <div className="p-8 max-w-[1400px] overflow-auto h-full">
       <div className="mb-8">
-        <div className="flex items-center gap-3 mb-1">
-          <h1 className="text-2xl font-bold text-slate-900">{greeting} 👋</h1>
-        </div>
-        <p className="text-slate-400 text-sm">{dateStr}</p>
+        <h1 className="text-2xl font-bold text-slate-900">{greeting}</h1>
+        <p className="text-slate-400 text-sm mt-1">{dateStr}</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        {stats.map((stat) => (
-          <div key={stat.label} className="glass-card p-5 relative overflow-hidden group hover:shadow-md transition-all duration-300">
-            <div className={`absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r ${stat.accent}`} />
+      {/* KPI Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        {kpis.map(kpi => (
+          <Link key={kpi.label} href={kpi.href}
+            className="glass-card p-5 relative overflow-hidden hover:shadow-md transition-all group">
+            <div className={`absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r ${kpi.accent}`} />
             <div className="flex items-start justify-between mb-3">
-              <div className={`w-10 h-10 rounded-xl ${stat.iconBg} flex items-center justify-center`}>
-                <span className={`${stat.iconColor} text-lg`}>{stat.icon}</span>
+              <div className={`w-10 h-10 rounded-xl ${kpi.iconBg} flex items-center justify-center`}>
+                <span className={`${kpi.iconColor} text-lg`}>{kpi.icon}</span>
               </div>
-              <span className={`badge ${stat.trendUp ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-500"}`}>
-                {stat.trendUp && "↑"}{stat.trend}
-              </span>
+              <span className="text-[10px] text-slate-400 group-hover:text-slate-600 transition-colors">→</span>
             </div>
-            <p className="text-3xl font-bold text-slate-900 mb-1">{stat.value}</p>
-            <p className="text-slate-400 text-sm">{stat.label}</p>
-          </div>
+            <p className="text-3xl font-bold text-slate-900 mb-0.5">{kpi.value}</p>
+            <p className="text-slate-500 text-sm font-medium">{kpi.label}</p>
+            <p className="text-slate-400 text-xs mt-0.5">{kpi.sub}</p>
+          </Link>
         ))}
       </div>
 
-      <div className="glass-card p-6 mb-8">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+
+        {/* Recent Activity */}
+        <div className="lg:col-span-2 glass-card p-6">
+          <div className="flex items-center justify-between mb-5">
+            <div>
+              <h2 className="text-base font-semibold text-slate-900">Letzte Aktivitäten</h2>
+              <p className="text-xs text-slate-400 mt-0.5">Echtzeit · aktualisiert alle 8s</p>
+            </div>
+            <Link href="/dashboard/conversations" className="text-xs text-violet-500 hover:text-violet-700 font-medium transition-colors">
+              Alle ansehen →
+            </Link>
+          </div>
+
+          {stats && stats.recentActivity.length > 0 ? (
+            <div className="space-y-2">
+              {stats.recentActivity.map(a => (
+                <Link key={a.id} href={`/dashboard/conversations`}
+                  className="flex items-center gap-3 p-3 rounded-xl hover:bg-slate-50 transition-colors group">
+                  <div className="w-8 h-8 rounded-xl bg-violet-100 flex items-center justify-center font-bold text-violet-700 text-sm shrink-0">
+                    {a.leadName.slice(0, 1).toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <span className="text-sm font-semibold text-slate-800">{a.leadName}</span>
+                      <span className="text-xs text-slate-400">{CHANNEL_ICON[a.channel]}</span>
+                      <span className={`w-1.5 h-1.5 rounded-full ${STATE_DOT[a.state]}`} />
+                      <span className="text-[11px] text-slate-400">{STATE_LABEL[a.state]}</span>
+                      {a.intent && (
+                        <span className={`text-[11px] font-bold ${INTENT_COLOR[a.intent] || "text-slate-400"}`}>
+                          · {a.intent}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-500 truncate">
+                      {a.lastRole === "agent" ? "↗ " : "← "}
+                      {a.lastMessage}
+                    </p>
+                  </div>
+                  <span className="text-[10px] text-slate-400 shrink-0">{timeAgo(a.lastActivity)}</span>
+                </Link>
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-10 text-center">
+              <div className="w-14 h-14 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-center mb-3">
+                <span className="text-slate-300 text-xl">○</span>
+              </div>
+              <p className="text-slate-500 text-sm font-medium mb-1">Keine Aktivitäten</p>
+              <p className="text-slate-400 text-xs max-w-xs">Starten Sie Ihre erste Kampagne um hier Aktivitäten zu sehen.</p>
+            </div>
+          )}
+
+          {/* Funnel bar */}
+          {stats && stats.campaigns.totalContacts > 0 && (
+            <div className="mt-5 pt-5 border-t border-slate-100">
+              <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-3">Gesamt-Funnel</p>
+              <div className="space-y-2">
+                {[
+                  { label: "Kontaktiert", val: stats.campaigns.totalContacts, color: "bg-violet-400", max: stats.campaigns.totalContacts },
+                  { label: "Geantwortet", val: stats.campaigns.totalReplied,  color: "bg-blue-400",   max: stats.campaigns.totalContacts },
+                  { label: "Termin",      val: stats.campaigns.totalBooked,   color: "bg-emerald-500",max: stats.campaigns.totalContacts },
+                ].map(row => (
+                  <div key={row.label} className="flex items-center gap-3">
+                    <span className="text-[11px] text-slate-500 w-24 shrink-0">{row.label}</span>
+                    <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                      <div className={`h-full ${row.color} rounded-full transition-all`}
+                        style={{ width: `${Math.min(100, Math.round((row.val / row.max) * 100))}%` }} />
+                    </div>
+                    <span className="text-[11px] font-bold text-slate-700 w-8 text-right">{row.val}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Quick actions */}
+        <div className="space-y-3">
+          <h2 className="text-base font-semibold text-slate-900 mb-4">Schnellaktionen</h2>
+          {[
+            { href: "/dashboard/simulation",   icon: "▶", title: "Test Agent Flow",    desc: "Live-Simulation der 6-Agent Pipeline",     highlight: true },
+            { href: "/dashboard/leads/new",     icon: "⟳", title: "Lead Reaktivierung", desc: "CSV → KI-Segmentierung → Outreach" },
+            { href: "/dashboard/campaigns/new", icon: "◎", title: "Neue Kampagne",      desc: "Kampagne mit Flow-Designer aufbauen" },
+            { href: "/dashboard/conversations", icon: "◊", title: "Gespräche",          desc: `${(stats?.conversations.replied ?? 0)} neue Antworten warten` },
+          ].map(a => (
+            <Link key={a.title} href={a.href}
+              className={`p-4 flex items-center gap-4 group rounded-2xl border transition-all ${
+                a.highlight
+                  ? "bg-violet-600 border-violet-700 hover:bg-violet-700 shadow-lg shadow-violet-200"
+                  : "glass-card-hover"
+              }`}>
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                a.highlight ? "bg-white/10 text-white" : "bg-violet-50 text-violet-600"
+              }`}>
+                <span className="text-lg">{a.icon}</span>
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className={`font-semibold text-sm ${a.highlight ? "text-white" : "text-slate-800 group-hover:text-violet-600"} transition-colors`}>
+                  {a.title}
+                </p>
+                <p className={`text-xs mt-0.5 ${a.highlight ? "text-violet-200" : "text-slate-400"}`}>{a.desc}</p>
+              </div>
+              <span className={`text-sm ${a.highlight ? "text-violet-300" : "text-slate-300 group-hover:text-slate-500"}`}>→</span>
+            </Link>
+          ))}
+        </div>
+      </div>
+
+      {/* Agent Grid */}
+      <div className="glass-card p-6">
         <div className="flex items-center justify-between mb-5">
           <div>
             <h2 className="text-base font-semibold text-slate-900">Agent Status</h2>
             <p className="text-xs text-slate-400 mt-0.5">7 von 7 Agents bereit</p>
           </div>
-          <span className="badge bg-emerald-50 text-emerald-600 border border-emerald-100">
+          <span className="badge bg-emerald-50 text-emerald-600 border border-emerald-100 flex items-center gap-1.5">
             <span className="status-dot-green" /> Alle Systeme operativ
           </span>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
-          {agentStatus.map((agent) => (
+          {agentStatus.map(agent => (
             <div key={agent.name} className={`${agent.bg} border ${agent.border} rounded-2xl p-4 text-center hover:scale-[1.03] transition-all duration-200`}>
               <div className={`text-2xl mb-2.5 ${agent.text}`}>{agent.icon}</div>
               <p className="text-slate-800 text-xs font-semibold mb-0.5 truncate">{agent.name}</p>
@@ -71,49 +262,6 @@ export default function DashboardPage() {
                 <span className="text-emerald-600 text-[10px] font-medium">bereit</span>
               </div>
             </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 glass-card p-6">
-          <div className="flex items-center justify-between mb-5">
-            <h2 className="text-base font-semibold text-slate-900">Letzte Aktivitaeten</h2>
-            <a href="/dashboard/conversations" className="text-xs text-slate-400 hover:text-slate-700 transition-colors">Alle anzeigen</a>
-          </div>
-          <div className="flex flex-col items-center justify-center py-12 text-center">
-            <div className="w-16 h-16 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-center mb-4">
-              <span className="text-slate-300 text-2xl">○</span>
-            </div>
-            <p className="text-slate-500 text-sm font-medium mb-1">Keine Aktivitaeten</p>
-            <p className="text-slate-400 text-xs max-w-xs">Starten Sie Ihre erste Kampagne um hier Aktivitaeten zu sehen.</p>
-          </div>
-        </div>
-
-        <div className="space-y-3">
-          <h2 className="text-base font-semibold text-slate-900 mb-4">Schnellaktionen</h2>
-          {[
-            { href: "/dashboard/simulation", icon: "▶", title: "Test Agent Flow", desc: "Live-Simulation: Agents bei der Arbeit zusehen", iconBg: "bg-violet-600", iconColor: "text-white", border: "border-violet-700", highlight: true },
-            { href: "/dashboard/leads/new", icon: "⟳", title: "Lead Reaktivierung", desc: "CSV hochladen → KI-Segmentierung → Outreach", iconBg: "bg-cyan-50", iconColor: "text-cyan-600", border: "border-cyan-100" },
-            { href: "/dashboard/campaigns/new", icon: "◎", title: "Neue Kampagne", desc: "CRM importieren & Kampagne starten", iconBg: "bg-violet-50", iconColor: "text-violet-600", border: "border-violet-100" },
-            { href: "/dashboard/clients/new", icon: "◈", title: "Endkunde hinzufuegen", desc: "Neuen Kunden onboarden", iconBg: "bg-cyan-50", iconColor: "text-cyan-600", border: "border-cyan-100" },
-            { href: "/dashboard/conversations", icon: "◊", title: "Gespraeche ansehen", desc: "Agent-Konversationen ueberwachen", iconBg: "bg-emerald-50", iconColor: "text-emerald-600", border: "border-emerald-100" },
-          ].map((action) => (
-            <a key={action.title} href={action.href}
-              className={`p-4 flex items-center gap-4 group rounded-2xl border transition-all duration-200 ${
-                (action as any).highlight
-                  ? "bg-violet-600 border-violet-700 hover:bg-violet-700 shadow-lg shadow-violet-200"
-                  : "glass-card-hover"
-              }`}>
-              <div className={`w-11 h-11 rounded-xl ${action.iconBg} border ${action.border} flex items-center justify-center shrink-0`}>
-                <span className={`${action.iconColor} text-lg`}>{action.icon}</span>
-              </div>
-              <div className="flex-1 min-w-0">
-                <h3 className={`font-semibold text-sm transition-colors ${(action as any).highlight ? "text-white" : "text-slate-800 group-hover:text-violet-600"}`}>{action.title}</h3>
-                <p className={`text-xs mt-0.5 ${(action as any).highlight ? "text-violet-200" : "text-slate-400"}`}>{action.desc}</p>
-              </div>
-              <span className={`transition-colors ${(action as any).highlight ? "text-violet-300" : "text-slate-300 group-hover:text-slate-500"}`}>→</span>
-            </a>
           ))}
         </div>
       </div>
