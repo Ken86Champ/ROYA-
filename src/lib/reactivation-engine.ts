@@ -168,17 +168,50 @@ function timeSince(days: number | null): string {
 
 // ─── PROFILE BUILDER ─────────────────────────────────────────────────────────
 
+function nameFromEmail(email: string): { firstName: string; lastName: string } {
+  // a.halbeisen@bluewin.ch → firstName: "A.", lastName: "Halbeisen"
+  // thomas.meier@example.com → firstName: "Thomas", lastName: "Meier"
+  const local = email.split("@")[0] ?? "";
+  const parts = local.split(/[._\-]/).filter(Boolean).map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase());
+  if (parts.length >= 2) return { firstName: parts[0], lastName: parts.slice(1).join(" ") };
+  if (parts.length === 1) return { firstName: parts[0], lastName: "" };
+  return { firstName: "Hallo", lastName: "" };
+}
+
 export function buildLeadProfile(
   normalized: Record<string, string>,
   id: number,
   context: BusinessContext
 ): LeadProfile {
-  const firstName = normalized.firstName || normalized.fullName?.split(" ")[0] || "";
-  const lastName  = normalized.lastName  || normalized.fullName?.split(" ").slice(1).join(" ") || "";
-  const fullName  = normalized.fullName  || `${firstName} ${lastName}`.trim() || "Unbekannt";
+  const email = normalized.email || "";
+
+  // Detect if fullName/firstName looks like an email — extract proper name instead
+  const rawFullName  = normalized.fullName  || "";
+  const rawFirstName = normalized.firstName || "";
+  const isEmailAsName = (s: string) => s.includes("@");
+
+  let firstName: string;
+  let lastName: string;
+
+  if (rawFirstName && !isEmailAsName(rawFirstName)) {
+    firstName = rawFirstName;
+    lastName  = normalized.lastName || rawFullName.split(" ").slice(1).join(" ") || "";
+  } else if (rawFullName && !isEmailAsName(rawFullName)) {
+    firstName = rawFullName.split(" ")[0] ?? "";
+    lastName  = rawFullName.split(" ").slice(1).join(" ") || "";
+  } else if (email) {
+    // Fall back to extracting from email
+    const extracted = nameFromEmail(email);
+    firstName = extracted.firstName;
+    lastName  = extracted.lastName;
+  } else {
+    firstName = "";
+    lastName  = "";
+  }
+
+  const fullName  = `${firstName} ${lastName}`.trim() || "Unbekannt";
   const company   = normalized.company   || "";
   const jobTitle  = normalized.jobTitle  || "";
-  const email     = normalized.email     || "";
   const phone     = normalized.phone     || "";
   const industry  = normalized.industry  || "";
   const city      = normalized.city      || "";
