@@ -247,7 +247,7 @@ function SimulationPageInner() {
   const [dbLeadsLoading, setDbLeadsLoading] = useState(false);
 
   // Campaign picker state
-  const [campaigns, setCampaigns] = useState<{ id: string; name: string; offer?: string; valueProp?: string; cta?: string; targetAudience?: string; agentName?: string; agentTone?: string }[]>([]);
+  const [campaigns, setCampaigns] = useState<{ id: string; name: string; companyName?: string; offer?: string; valueProp?: string; painPoint?: string; noConvertReason?: string; cta?: string; bookingLink?: string; targetAudience?: string; agentName?: string; leadType?: string }[]>([]);
   const [selectedCampaignId, setSelectedCampaignId] = useState<string>("");
 
   // Load campaign list on mount
@@ -265,11 +265,16 @@ function SimulationPageInner() {
     if (!camp) return;
     setCtx(prev => ({
       ...prev,
-      agentName:   camp.agentName      || prev.agentName,
-      product:     camp.offer          || prev.product,
-      valueProp:   camp.valueProp      || prev.valueProp,
-      ctaGoal:     camp.cta            || prev.ctaGoal,
-      targetMarket: camp.targetAudience || prev.targetMarket,
+      agentName:        camp.agentName       || prev.agentName,
+      companyName:      camp.companyName      || prev.companyName,
+      product:          camp.offer            || prev.product,
+      valueProp:        camp.valueProp        || prev.valueProp,
+      painPoint:        camp.painPoint        || prev.painPoint,
+      noConvertReason:  camp.noConvertReason  || prev.noConvertReason,
+      ctaGoal:          camp.cta              || prev.ctaGoal,
+      bookingLink:      camp.bookingLink      || prev.bookingLink,
+      targetMarket:     camp.targetAudience   || prev.targetMarket,
+      leadType:         (camp.leadType as "b2b" | "b2c" | undefined) || prev.leadType,
     }));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCampaignId]);

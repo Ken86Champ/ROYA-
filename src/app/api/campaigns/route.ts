@@ -15,12 +15,17 @@ export async function POST(req: NextRequest) {
       channels:       body.channels,
       contacts:       body.contacts,
       flow:           body.flow,
-      offer:          body.offer,
-      valueProp:      body.valueProp,
-      cta:            body.cta,
-      targetAudience: body.targetAudience,
-      agentName:      body.agentName,
-      agentTone:      body.agentTone,
+      agentName:       body.agentName,
+      agentTone:       body.agentTone,
+      companyName:     body.companyName,
+      offer:           body.offer,
+      valueProp:       body.valueProp,
+      painPoint:       body.painPoint,
+      noConvertReason: body.noConvertReason,
+      cta:             body.cta,
+      bookingLink:     body.bookingLink,
+      targetAudience:  body.targetAudience,
+      leadType:        body.leadType,
     });
     if (body.clientId) {
       await clientStore.linkCampaign(body.clientId, campaign.id);

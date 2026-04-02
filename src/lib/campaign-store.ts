@@ -63,12 +63,17 @@ export interface Campaign {
   startedAt?: string;
   completedAt?: string;
   // Kampagnen-Kontext (Single Source of Truth)
-  offer?: string;
-  valueProp?: string;
-  cta?: string;
-  targetAudience?: string;
   agentName?: string;
   agentTone?: string;
+  companyName?: string;
+  offer?: string;
+  valueProp?: string;
+  painPoint?: string;
+  noConvertReason?: string;
+  cta?: string;
+  bookingLink?: string;
+  targetAudience?: string;
+  leadType?: "b2b" | "b2c";
   mode?: CampaignMode;
 }
 
@@ -119,13 +124,18 @@ function rowToCampaign(r: Record<string, unknown>, contacts: CampaignContact[]):
     createdAt:      r.created_at as string,
     startedAt:      r.started_at as string | undefined,
     completedAt:    r.completed_at as string | undefined,
-    offer:          r.offer as string | undefined,
-    valueProp:      r.value_prop as string | undefined,
-    cta:            r.cta as string | undefined,
-    targetAudience: r.target_audience as string | undefined,
-    agentName:      r.agent_name as string | undefined,
-    agentTone:      r.agent_tone as string | undefined,
-    mode:           (r.mode as CampaignMode | undefined) ?? "draft",
+    agentName:        r.agent_name as string | undefined,
+    agentTone:        r.agent_tone as string | undefined,
+    companyName:      r.company_name as string | undefined,
+    offer:            r.offer as string | undefined,
+    valueProp:        r.value_prop as string | undefined,
+    painPoint:        r.pain_point as string | undefined,
+    noConvertReason:  r.no_convert_reason as string | undefined,
+    cta:              r.cta as string | undefined,
+    bookingLink:      r.booking_link as string | undefined,
+    targetAudience:   r.target_audience as string | undefined,
+    leadType:         r.lead_type as "b2b" | "b2c" | undefined,
+    mode:             (r.mode as CampaignMode | undefined) ?? "draft",
   };
 }
 
@@ -188,12 +198,17 @@ export async function create(params: {
   channels: Channel[];
   contacts?: Omit<CampaignContact, "id" | "status" | "currentStep" | "emailAttempts" | "smsAttempts" | "whatsappAttempts">[];
   flow?: FlowStep[];
-  offer?: string;
-  valueProp?: string;
-  cta?: string;
-  targetAudience?: string;
   agentName?: string;
   agentTone?: string;
+  companyName?: string;
+  offer?: string;
+  valueProp?: string;
+  painPoint?: string;
+  noConvertReason?: string;
+  cta?: string;
+  bookingLink?: string;
+  targetAudience?: string;
+  leadType?: "b2b" | "b2c";
 }): Promise<Campaign> {
   const now = new Date().toISOString();
   const id  = genId("camp");
@@ -202,13 +217,18 @@ export async function create(params: {
     id, name: params.name, client_id: params.clientId ?? null,
     channels: params.channels, status: "draft",
     flow: params.flow ?? defaultFlow(), created_at: now,
-    offer:           params.offer          ?? null,
-    value_prop:      params.valueProp      ?? null,
-    cta:             params.cta            ?? null,
-    target_audience: params.targetAudience ?? null,
-    agent_name:      params.agentName      ?? null,
-    agent_tone:      params.agentTone      ?? null,
-    mode:            "draft",
+    agent_name:        params.agentName        ?? null,
+    agent_tone:        params.agentTone        ?? null,
+    company_name:      params.companyName      ?? null,
+    offer:             params.offer            ?? null,
+    value_prop:        params.valueProp        ?? null,
+    pain_point:        params.painPoint        ?? null,
+    no_convert_reason: params.noConvertReason  ?? null,
+    cta:               params.cta              ?? null,
+    booking_link:      params.bookingLink      ?? null,
+    target_audience:   params.targetAudience   ?? null,
+    lead_type:         params.leadType         ?? null,
+    mode:              "draft",
   });
 
   // If context columns don't exist yet (migration pending), retry without them
@@ -247,9 +267,12 @@ export async function create(params: {
     channels: params.channels, status: "draft",
     flow: params.flow ?? defaultFlow(), contacts,
     stats: computeStats(contacts), createdAt: now,
-    offer: params.offer, valueProp: params.valueProp, cta: params.cta,
-    targetAudience: params.targetAudience, agentName: params.agentName,
-    agentTone: params.agentTone, mode: "draft" as CampaignMode,
+    agentName: params.agentName, agentTone: params.agentTone,
+    companyName: params.companyName, offer: params.offer, valueProp: params.valueProp,
+    painPoint: params.painPoint, noConvertReason: params.noConvertReason,
+    cta: params.cta, bookingLink: params.bookingLink,
+    targetAudience: params.targetAudience, leadType: params.leadType,
+    mode: "draft" as CampaignMode,
   };
 }
 

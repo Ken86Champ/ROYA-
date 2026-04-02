@@ -92,18 +92,23 @@ export default function NewCampaignPage() {
   }, []);
 
   const [form, setForm] = useState({
-    name: "",
-    clientId: "",
-    channels: [] as string[],
-    file: null as File | null,
-    flow: defaultFlow(),
+    name:            "",
+    clientId:        "",
+    channels:        [] as string[],
+    file:            null as File | null,
+    flow:            defaultFlow(),
     // Kampagnen-Kontext (Single Source of Truth)
-    agentName:      "Tanja",
-    agentTone:      "warm_direct",
-    offer:          "",
-    valueProp:      "",
-    cta:            "",
-    targetAudience: "",
+    agentName:        "Tanja",
+    agentTone:        "warm_direct",
+    companyName:      "",
+    offer:            "",
+    valueProp:        "",
+    painPoint:        "",
+    noConvertReason:  "",
+    cta:              "",
+    bookingLink:      "",
+    targetAudience:   "",
+    leadType:         "b2c" as "b2b" | "b2c",
   });
 
   const toggleChannel = (ch: string) =>
@@ -174,12 +179,17 @@ export default function NewCampaignPage() {
           channels:       form.channels,
           flow:           form.flow,
           contacts:       parsedContacts,
-          agentName:      form.agentName      || undefined,
-          agentTone:      form.agentTone      || undefined,
-          offer:          form.offer          || undefined,
-          valueProp:      form.valueProp      || undefined,
-          cta:            form.cta            || undefined,
-          targetAudience: form.targetAudience || undefined,
+          agentName:       form.agentName       || undefined,
+          agentTone:       form.agentTone       || undefined,
+          companyName:     form.companyName     || undefined,
+          offer:           form.offer           || undefined,
+          valueProp:       form.valueProp       || undefined,
+          painPoint:       form.painPoint       || undefined,
+          noConvertReason: form.noConvertReason || undefined,
+          cta:             form.cta             || undefined,
+          bookingLink:     form.bookingLink     || undefined,
+          targetAudience:  form.targetAudience  || undefined,
+          leadType:        form.leadType        || undefined,
         }),
       });
       if (!res.ok) {
@@ -263,9 +273,9 @@ export default function NewCampaignPage() {
               ))}
             </div>
           </div>
-          {/* Agent & Kontext */}
-          <div className="pt-4 border-t border-slate-100 space-y-4">
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Agent & Kampagnen-Kontext</p>
+          {/* Agent-Konfiguration */}
+          <div className="pt-4 border-t border-slate-100 space-y-3">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Agent-Konfiguration</p>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs text-slate-500 block mb-1.5">Agent-Name</label>
@@ -285,30 +295,75 @@ export default function NewCampaignPage() {
                 </select>
               </div>
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-slate-500 block mb-1.5">Lead-Typ</label>
+                <select value={form.leadType}
+                  onChange={e => setForm(f => ({ ...f, leadType: e.target.value as "b2b" | "b2c" }))}
+                  className={sel}>
+                  <option value="b2c">B2C — Privatpersonen</option>
+                  <option value="b2b">B2B — Unternehmen</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1.5">Unternehmensname</label>
+                <input type="text" value={form.companyName}
+                  onChange={e => setForm(f => ({ ...f, companyName: e.target.value }))}
+                  placeholder="z.B. FitLife Studio AG" className={inp} />
+              </div>
+            </div>
+          </div>
+
+          {/* Unternehmensgrundlagen */}
+          <div className="pt-4 border-t border-slate-100 space-y-3">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Unternehmensgrundlagen</p>
             <div>
-              <label className="text-xs text-slate-500 block mb-1.5">Angebot <span className="text-slate-300">(Was wird angeboten?)</span></label>
+              <label className="text-xs text-slate-500 block mb-1.5">Produkt / Dienstleistung / Service</label>
               <input type="text" value={form.offer}
                 onChange={e => setForm(f => ({ ...f, offer: e.target.value }))}
                 placeholder="z.B. Persönliches Fitness-Coaching + Ernährungsplan" className={inp} />
             </div>
             <div>
-              <label className="text-xs text-slate-500 block mb-1.5">Mehrwert / Value Prop <span className="text-slate-300">(Was gewinnt der Lead?)</span></label>
+              <label className="text-xs text-slate-500 block mb-1.5">Value Proposition <span className="text-slate-300">(Kernnutzen für den Lead)</span></label>
               <textarea value={form.valueProp}
                 onChange={e => setForm(f => ({ ...f, valueProp: e.target.value }))}
-                rows={2} placeholder="z.B. In 12 Wochen nachhaltig abnehmen ohne Verzicht"
+                rows={2} placeholder="z.B. In 12 Wochen nachhaltig Gewicht verlieren ohne Verzicht — mit persönlichem Trainings- und Ernährungsplan"
                 className={`${inp} resize-none`} />
             </div>
             <div>
-              <label className="text-xs text-slate-500 block mb-1.5">Call-to-Action <span className="text-slate-300">(Was soll der Lead tun?)</span></label>
+              <label className="text-xs text-slate-500 block mb-1.5">Pain Point <span className="text-slate-300">(Was nervt den Lead?)</span></label>
+              <input type="text" value={form.painPoint}
+                onChange={e => setForm(f => ({ ...f, painPoint: e.target.value }))}
+                placeholder="z.B. Kein Durchhalten alleine, fehlende Struktur und Motivation" className={inp} />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1.5">Warum nicht konvertiert? <span className="text-slate-300">(Drop-off Grund)</span></label>
+              <input type="text" value={form.noConvertReason}
+                onChange={e => setForm(f => ({ ...f, noConvertReason: e.target.value }))}
+                placeholder="z.B. Timing, Preis, anderes Programm ausprobiert" className={inp} />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1.5">Zielgruppe</label>
+              <input type="text" value={form.targetAudience}
+                onChange={e => setForm(f => ({ ...f, targetAudience: e.target.value }))}
+                placeholder="z.B. Ehemalige Kunden die vor 3–12 Monaten aufgehört haben" className={inp} />
+            </div>
+          </div>
+
+          {/* CTA */}
+          <div className="pt-4 border-t border-slate-100 space-y-3">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Call-to-Action</p>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1.5">CTA-Ziel <span className="text-slate-300">(Was soll der Lead tun?)</span></label>
               <input type="text" value={form.cta}
                 onChange={e => setForm(f => ({ ...f, cta: e.target.value }))}
                 placeholder="z.B. Kostenloses 15-Min Erstgespräch buchen" className={inp} />
             </div>
             <div>
-              <label className="text-xs text-slate-500 block mb-1.5">Zielgruppe <span className="text-slate-300">(Wen reaktivierst du?)</span></label>
-              <input type="text" value={form.targetAudience}
-                onChange={e => setForm(f => ({ ...f, targetAudience: e.target.value }))}
-                placeholder="z.B. Ehemalige Kunden die vor 3–12 Monaten aufgehört haben" className={inp} />
+              <label className="text-xs text-slate-500 block mb-1.5">Booking-Link <span className="text-slate-300">(Kalender-URL)</span></label>
+              <input type="text" value={form.bookingLink}
+                onChange={e => setForm(f => ({ ...f, bookingLink: e.target.value }))}
+                placeholder="https://cal.com/deinname/erstgespraech" className={inp} />
             </div>
           </div>
 
@@ -599,9 +654,11 @@ export default function NewCampaignPage() {
           <div className="bg-slate-50 border border-slate-200 rounded-xl divide-y divide-slate-100">
             {[
               { label: "Kampagne",   value: form.name },
-              { label: "Agent",      value: `${form.agentName || "Tanja"} · ${form.agentTone || "warm_direct"}` },
-              { label: "Angebot",    value: form.offer || "—" },
+              { label: "Agent",      value: `${form.agentName || "Tanja"} · ${form.agentTone || "—"} · ${form.leadType?.toUpperCase() || "—"}` },
+              { label: "Unternehmen",value: form.companyName || "—" },
+              { label: "Produkt",    value: form.offer || "—" },
               { label: "CTA",        value: form.cta || "—" },
+              { label: "Booking",    value: form.bookingLink || "—" },
               { label: "Kanäle",    value: form.channels.map(c => c.toUpperCase()).join(", ") },
               { label: "Flow",      value: `${form.flow.length} Schritte (${form.flow.filter(s => s.type === "condition").length} Conditions)` },
               { label: "Kontakte",  value: parsedContacts.length > 0 ? `${parsedContacts.length} importiert` : form.file?.name ?? "Kein Import" },

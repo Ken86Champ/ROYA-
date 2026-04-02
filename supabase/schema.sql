@@ -26,13 +26,18 @@ create table if not exists campaigns (
   paused_at        timestamptz,
   completed_at     timestamptz,
   -- Kampagnen-Kontext (Single Source of Truth)
-  offer            text,
-  value_prop       text,
-  cta              text,
-  target_audience  text,
-  agent_name       text,
-  agent_tone       text,
-  mode             text not null default 'draft'   -- draft|test|live
+  agent_name        text,
+  agent_tone        text,
+  company_name      text,
+  offer             text,
+  value_prop        text,
+  pain_point        text,
+  no_convert_reason text,
+  cta               text,
+  booking_link      text,
+  target_audience   text,
+  lead_type         text,   -- b2b|b2c
+  mode              text not null default 'draft'   -- draft|test|live
 );
 
 -- Campaign contacts (one row per lead per campaign)
