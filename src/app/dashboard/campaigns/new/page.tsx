@@ -83,6 +83,7 @@ export default function NewCampaignPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [step, setStep] = useState(1);
   const [launching, setLaunching] = useState(false);
+  const [autofilling, setAutofilling] = useState(false);
   const [editingStep, setEditingStep] = useState<string | null>(null);
   const [clients, setClients] = useState<Client[]>([]);
   const [parsedContacts, setParsedContacts] = useState<ParsedContact[]>([]);
@@ -110,6 +111,31 @@ export default function NewCampaignPage() {
     targetAudience:   "",
     leadType:         "b2c" as "b2b" | "b2c",
   });
+
+  const handleAutofill = async () => {
+    if (!form.offer.trim()) return;
+    setAutofilling(true);
+    try {
+      const res = await fetch("/api/campaigns/autofill", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ companyName: form.companyName, offer: form.offer, leadType: form.leadType }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setForm(f => ({
+          ...f,
+          valueProp:       data.valueProp       || f.valueProp,
+          painPoint:       data.painPoint       || f.painPoint,
+          noConvertReason: data.noConvertReason || f.noConvertReason,
+          cta:             data.cta             || f.cta,
+          targetAudience:  data.targetAudience  || f.targetAudience,
+        }));
+      }
+    } finally {
+      setAutofilling(false);
+    }
+  };
 
   const toggleChannel = (ch: string) =>
     setForm(f => ({ ...f, channels: f.channels.includes(ch) ? f.channels.filter(c => c !== ch) : [...f.channels, ch] }));
@@ -316,9 +342,22 @@ export default function NewCampaignPage() {
 
           {/* Unternehmensgrundlagen */}
           <div className="pt-4 border-t border-slate-100 space-y-3">
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Unternehmensgrundlagen</p>
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Unternehmensgrundlagen</p>
+              <button
+                type="button"
+                onClick={handleAutofill}
+                disabled={!form.offer.trim() || autofilling}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all">
+                {autofilling ? (
+                  <><span className="animate-spin inline-block">◌</span> KI generiert…</>
+                ) : (
+                  <><span>✦</span> Autofill mit KI</>
+                )}
+              </button>
+            </div>
             <div>
-              <label className="text-xs text-slate-500 block mb-1.5">Produkt / Dienstleistung / Service</label>
+              <label className="text-xs text-slate-500 block mb-1.5">Produkt / Dienstleistung / Service <span className="text-slate-300">(zuerst ausfüllen für Autofill)</span></label>
               <input type="text" value={form.offer}
                 onChange={e => setForm(f => ({ ...f, offer: e.target.value }))}
                 placeholder="z.B. Persönliches Fitness-Coaching + Ernährungsplan" className={inp} />
