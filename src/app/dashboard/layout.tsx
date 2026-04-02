@@ -3,17 +3,13 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const navItems = [
-  { href: "/dashboard", label: "Uebersicht", icon: "⬡" },
-  { href: "/dashboard/simulation", label: "Agent Flow", icon: "▶", highlight: true },
-  { href: "/dashboard/leads", label: "Reaktivierung", icon: "⟳" },
-  { href: "/dashboard/clients", label: "Endkunden", icon: "◈" },
-  { href: "/dashboard/campaigns", label: "Kampagnen", icon: "◎" },
-  { href: "/dashboard/contacts", label: "Kontakte", icon: "◉" },
-  { href: "/dashboard/sms-test", label: "SMS Simulator", icon: "◈", highlight: true },
-  { href: "/dashboard/live-chat", label: "Live Chat", icon: "◉" },
-  { href: "/dashboard/conversations", label: "Gespraeche", icon: "◊" },
-  { href: "/dashboard/appointments", label: "Termine", icon: "◇" },
-  { href: "/dashboard/settings", label: "Einstellungen", icon: "⚙" },
+  { href: "/dashboard",               label: "Uebersicht",    icon: "⬡" },
+  { href: "/dashboard/campaigns",     label: "Kampagnen",     icon: "◎" },
+  { href: "/dashboard/conversations", label: "Gespraeche",    icon: "◊" },
+  { href: "/dashboard/sms-test",      label: "Agent Test",    icon: "▶", group: "Testen" },
+  { href: "/dashboard/simulation",    label: "Outreach Sim",  icon: "◉", group: "Testen" },
+  { href: "/dashboard/clients",       label: "Endkunden",     icon: "◈" },
+  { href: "/dashboard/settings",      label: "Einstellungen", icon: "⚙" },
 ];
 
 function getPageTitle(pathname: string): string {
@@ -51,26 +47,35 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               Navigation
             </span>
           </div>
-          {navItems.map((item) => {
-            const isActive =
-              pathname === item.href ||
-              (item.href !== "/dashboard" && pathname.startsWith(item.href));
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={
-                  isActive ? "nav-item-active" :
-                  (item as any).highlight ? "nav-item bg-violet-50 text-violet-700 border border-violet-100 hover:bg-violet-100" :
-                  "nav-item"
-                }
-              >
-                <span className="text-base">{item.icon}</span>
-                <span>{item.label}</span>
-                {isActive && <span className="ml-auto w-1.5 h-1.5 rounded-full bg-violet-500" />}
-              </Link>
-            );
-          })}
+          {(() => {
+            const elements: React.ReactNode[] = [];
+            let lastGroup: string | undefined = undefined;
+            navItems.forEach((item) => {
+              const isActive =
+                pathname === item.href ||
+                (item.href !== "/dashboard" && pathname.startsWith(item.href));
+              // Render group label once before first item in group
+              if ((item as any).group && (item as any).group !== lastGroup) {
+                lastGroup = (item as any).group;
+                elements.push(
+                  <div key={`group-${lastGroup}`} className="px-3 pt-3 pb-1">
+                    <span className="text-[10px] font-semibold text-slate-300 uppercase tracking-widest">{lastGroup}</span>
+                  </div>
+                );
+              } else if (!(item as any).group) {
+                lastGroup = undefined;
+              }
+              elements.push(
+                <Link key={item.href} href={item.href}
+                  className={`${isActive ? "nav-item-active" : "nav-item"} ${(item as any).group ? "pl-5" : ""}`}>
+                  <span className="text-base">{item.icon}</span>
+                  <span>{item.label}</span>
+                  {isActive && <span className="ml-auto w-1.5 h-1.5 rounded-full bg-violet-500" />}
+                </Link>
+              );
+            });
+            return elements;
+          })()}
         </nav>
 
         {/* Bottom */}

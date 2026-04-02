@@ -48,6 +48,8 @@ export interface CampaignStats {
   bookingRate: number;
 }
 
+export type CampaignMode = "draft" | "test" | "live";
+
 export interface Campaign {
   id: string;
   name: string;
@@ -60,6 +62,14 @@ export interface Campaign {
   createdAt: string;
   startedAt?: string;
   completedAt?: string;
+  // Kampagnen-Kontext (Single Source of Truth)
+  offer?: string;
+  valueProp?: string;
+  cta?: string;
+  targetAudience?: string;
+  agentName?: string;
+  agentTone?: string;
+  mode?: CampaignMode;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -98,17 +108,24 @@ function rowToContact(r: Record<string, unknown>): CampaignContact {
 
 function rowToCampaign(r: Record<string, unknown>, contacts: CampaignContact[]): Campaign {
   return {
-    id:          r.id as string,
-    name:        r.name as string,
-    clientId:    r.client_id as string | undefined,
-    channels:    r.channels as Channel[],
-    status:      r.status as CampaignStatus,
-    flow:        (r.flow as FlowStep[]) ?? [],
+    id:             r.id as string,
+    name:           r.name as string,
+    clientId:       r.client_id as string | undefined,
+    channels:       r.channels as Channel[],
+    status:         r.status as CampaignStatus,
+    flow:           (r.flow as FlowStep[]) ?? [],
     contacts,
-    stats:       computeStats(contacts),
-    createdAt:   r.created_at as string,
-    startedAt:   r.started_at as string | undefined,
-    completedAt: r.completed_at as string | undefined,
+    stats:          computeStats(contacts),
+    createdAt:      r.created_at as string,
+    startedAt:      r.started_at as string | undefined,
+    completedAt:    r.completed_at as string | undefined,
+    offer:          r.offer as string | undefined,
+    valueProp:      r.value_prop as string | undefined,
+    cta:            r.cta as string | undefined,
+    targetAudience: r.target_audience as string | undefined,
+    agentName:      r.agent_name as string | undefined,
+    agentTone:      r.agent_tone as string | undefined,
+    mode:           (r.mode as CampaignMode | undefined) ?? "draft",
   };
 }
 
@@ -171,15 +188,38 @@ export async function create(params: {
   channels: Channel[];
   contacts?: Omit<CampaignContact, "id" | "status" | "currentStep" | "emailAttempts" | "smsAttempts" | "whatsappAttempts">[];
   flow?: FlowStep[];
+  offer?: string;
+  valueProp?: string;
+  cta?: string;
+  targetAudience?: string;
+  agentName?: string;
+  agentTone?: string;
 }): Promise<Campaign> {
   const now = new Date().toISOString();
   const id  = genId("camp");
 
-  await supabase.from("campaigns").insert({
+  const { error: insertError } = await supabase.from("campaigns").insert({
     id, name: params.name, client_id: params.clientId ?? null,
     channels: params.channels, status: "draft",
     flow: params.flow ?? defaultFlow(), created_at: now,
+    offer:           params.offer          ?? null,
+    value_prop:      params.valueProp      ?? null,
+    cta:             params.cta            ?? null,
+    target_audience: params.targetAudience ?? null,
+    agent_name:      params.agentName      ?? null,
+    agent_tone:      params.agentTone      ?? null,
+    mode:            "draft",
   });
+
+  // If context columns don't exist yet (migration pending), retry without them
+  if (insertError) {
+    const { error: fallbackError } = await supabase.from("campaigns").insert({
+      id, name: params.name, client_id: params.clientId ?? null,
+      channels: params.channels, status: "draft",
+      flow: params.flow ?? defaultFlow(), created_at: now,
+    });
+    if (fallbackError) throw new Error(`Campaign insert failed: ${fallbackError.message}`);
+  }
 
   const contacts: CampaignContact[] = [];
 
@@ -207,6 +247,9 @@ export async function create(params: {
     channels: params.channels, status: "draft",
     flow: params.flow ?? defaultFlow(), contacts,
     stats: computeStats(contacts), createdAt: now,
+    offer: params.offer, valueProp: params.valueProp, cta: params.cta,
+    targetAudience: params.targetAudience, agentName: params.agentName,
+    agentTone: params.agentTone, mode: "draft" as CampaignMode,
   };
 }
 

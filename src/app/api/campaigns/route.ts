@@ -7,16 +7,27 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const body = await req.json();
-  const campaign = await store.create({
-    name: body.name,
-    clientId: body.clientId,
-    channels: body.channels,
-    contacts: body.contacts,
-    flow: body.flow,
-  });
-  if (body.clientId) {
-    await clientStore.linkCampaign(body.clientId, campaign.id);
+  try {
+    const body = await req.json();
+    const campaign = await store.create({
+      name:           body.name,
+      clientId:       body.clientId,
+      channels:       body.channels,
+      contacts:       body.contacts,
+      flow:           body.flow,
+      offer:          body.offer,
+      valueProp:      body.valueProp,
+      cta:            body.cta,
+      targetAudience: body.targetAudience,
+      agentName:      body.agentName,
+      agentTone:      body.agentTone,
+    });
+    if (body.clientId) {
+      await clientStore.linkCampaign(body.clientId, campaign.id);
+    }
+    return NextResponse.json(campaign, { status: 201 });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
-  return NextResponse.json(campaign, { status: 201 });
 }

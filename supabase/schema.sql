@@ -15,16 +15,24 @@ create table if not exists clients (
 
 -- Campaigns
 create table if not exists campaigns (
-  id           text primary key,
-  name         text not null,
-  client_id    text references clients(id) on delete set null,
-  channels     text[] not null default '{}',
-  status       text not null default 'draft',   -- draft|active|paused|completed
-  flow         jsonb not null default '[]',
-  created_at   timestamptz default now(),
-  started_at   timestamptz,
-  paused_at    timestamptz,
-  completed_at timestamptz
+  id               text primary key,
+  name             text not null,
+  client_id        text references clients(id) on delete set null,
+  channels         text[] not null default '{}',
+  status           text not null default 'draft',   -- draft|active|paused|completed
+  flow             jsonb not null default '[]',
+  created_at       timestamptz default now(),
+  started_at       timestamptz,
+  paused_at        timestamptz,
+  completed_at     timestamptz,
+  -- Kampagnen-Kontext (Single Source of Truth)
+  offer            text,
+  value_prop       text,
+  cta              text,
+  target_audience  text,
+  agent_name       text,
+  agent_tone       text,
+  mode             text not null default 'draft'   -- draft|test|live
 );
 
 -- Campaign contacts (one row per lead per campaign)

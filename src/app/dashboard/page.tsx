@@ -89,7 +89,7 @@ export default function DashboardPage() {
       sub: `${stats?.campaigns.avgReplyRate ?? 0}% Reply-Rate`,
       icon: "◉", accent: "from-cyan-500 to-blue-500",
       iconBg: "bg-cyan-50", iconColor: "text-cyan-600",
-      href: "/dashboard/contacts",
+      href: "/dashboard/campaigns",
     },
     {
       label: "Offene Gespräche",
@@ -105,7 +105,7 @@ export default function DashboardPage() {
       sub: `${stats?.conversations.booked ?? 0} via Agent`,
       icon: "◇", accent: "from-emerald-500 to-green-500",
       iconBg: "bg-emerald-50", iconColor: "text-emerald-600",
-      href: "/dashboard/appointments",
+      href: "/dashboard/conversations",
     },
   ];
 
@@ -238,10 +238,10 @@ export default function DashboardPage() {
         <div className="space-y-3">
           <h2 className="text-base font-semibold text-slate-900 mb-4">Schnellaktionen</h2>
           {[
-            { href: "/dashboard/simulation",   icon: "▶", title: "Test Agent Flow",    desc: "Live-Simulation der 6-Agent Pipeline",     highlight: true },
-            { href: "/dashboard/leads/new",     icon: "⟳", title: "Lead Reaktivierung", desc: "CSV → KI-Segmentierung → Outreach" },
-            { href: "/dashboard/campaigns/new", icon: "◎", title: "Neue Kampagne",      desc: "Kampagne mit Flow-Designer aufbauen" },
+            { href: "/dashboard/sms-test",      icon: "▶", title: "Agent testen",       desc: "V2-Orchestrator live testen",               highlight: true },
+            { href: "/dashboard/campaigns/new", icon: "◎", title: "Neue Kampagne",      desc: "Leads hochladen → Kampagne starten" },
             { href: "/dashboard/conversations", icon: "◊", title: "Gespräche",          desc: `${(stats?.conversations.replied ?? 0)} neue Antworten warten` },
+            { href: "/dashboard/clients",       icon: "◈", title: "Endkunden",          desc: "Kunden und deren Kampagnen verwalten" },
           ].map(a => (
             <Link key={a.title} href={a.href}
               className={`p-4 flex items-center gap-4 group rounded-2xl border transition-all ${

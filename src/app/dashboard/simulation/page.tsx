@@ -139,7 +139,7 @@ const PIPELINE_AGENTS = [
 
 // ─── TYPES ────────────────────────────────────────────────────────────────────
 
-type SetupMode = "demo" | "csv";
+type SetupMode = "demo" | "csv" | "db";
 type SimPhase = "setup" | "pipeline" | "running";
 type AgentStatus = "pending" | "running" | "done";
 
@@ -238,6 +238,80 @@ function SimulationPageInner() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const cancelRef = useRef(false);
 
+  // Live SMS send state
+  const [liveSmsNumber, setLiveSmsNumber] = useState("");
+  const [liveSmsStatus, setLiveSmsStatus] = useState<Record<string, "idle" | "sending" | "sent" | "error">>({});
+
+  // DB leads state
+  const [dbLeads, setDbLeads] = useState<Record<string, string>[]>([]);
+  const [dbLeadsLoading, setDbLeadsLoading] = useState(false);
+
+  // Campaign picker state
+  const [campaigns, setCampaigns] = useState<{ id: string; name: string; offer?: string; valueProp?: string; cta?: string; targetAudience?: string; agentName?: string; agentTone?: string }[]>([]);
+  const [selectedCampaignId, setSelectedCampaignId] = useState<string>("");
+
+  // Load campaign list on mount
+  useEffect(() => {
+    fetch("/api/campaigns")
+      .then(r => r.json())
+      .then((data: { id: string; name: string; offer?: string; valueProp?: string; cta?: string; targetAudience?: string; agentName?: string; agentTone?: string }[]) => setCampaigns(data))
+      .catch(() => {});
+  }, []);
+
+  // Apply campaign context to ctx when campaign selected
+  useEffect(() => {
+    if (!selectedCampaignId) return;
+    const camp = campaigns.find(c => c.id === selectedCampaignId);
+    if (!camp) return;
+    setCtx(prev => ({
+      ...prev,
+      agentName:   camp.agentName      || prev.agentName,
+      product:     camp.offer          || prev.product,
+      valueProp:   camp.valueProp      || prev.valueProp,
+      ctaGoal:     camp.cta            || prev.ctaGoal,
+      targetMarket: camp.targetAudience || prev.targetMarket,
+    }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCampaignId]);
+
+  const loadDbLeads = useCallback(async () => {
+    setDbLeadsLoading(true);
+    try {
+      const res = await fetch("/api/campaigns");
+      const camps = await res.json();
+      const leads: Record<string, string>[] = [];
+      for (const camp of camps) {
+        for (const c of camp.contacts ?? []) {
+          leads.push({
+            fullName:    c.name || "",
+            phone:       c.channel === "sms" || c.channel === "whatsapp" ? c.contact : "",
+            email:       c.channel === "email" ? c.contact : "",
+            campaignName: camp.name || "",
+          });
+        }
+      }
+      setDbLeads(leads);
+    } catch {}
+    setDbLeadsLoading(false);
+  }, []);
+
+  const sendLiveSms = useCallback(async (variationId: string, body: string) => {
+    const to = liveSmsNumber.trim();
+    if (!to) return;
+    setLiveSmsStatus(prev => ({ ...prev, [variationId]: "sending" }));
+    try {
+      const res = await fetch("/api/test-send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channel: "sms", to, body }),
+      });
+      const data = await res.json();
+      setLiveSmsStatus(prev => ({ ...prev, [variationId]: data.success ? "sent" : "error" }));
+    } catch {
+      setLiveSmsStatus(prev => ({ ...prev, [variationId]: "error" }));
+    }
+  }, [liveSmsNumber]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isProcessing, showVariations]);
@@ -257,6 +331,9 @@ function SimulationPageInner() {
         csvMappings.forEach(({ col, field }) => { if (field !== "ignore") norm[field] = row[col] || ""; });
         return norm;
       });
+    }
+    if (setupMode === "db" && dbLeads.length > 0) {
+      return dbLeads.slice(0, 10);
     }
     return DEMO_LEADS_NORMALIZED;
   };
@@ -502,16 +579,97 @@ function SimulationPageInner() {
             <div className="glass-card p-5">
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Test-Modus</p>
               <div className="flex gap-2">
-                {(["demo", "csv"] as const).map((m) => (
-                  <button key={m} onClick={() => setSetupMode(m)}
+                {([
+                  { m: "demo", label: "◎ Demo" },
+                  { m: "csv",  label: "↑ CSV" },
+                  { m: "db",   label: "◈ Aus DB" },
+                ] as const).map(({ m, label }) => (
+                  <button key={m} onClick={() => {
+                    setSetupMode(m as SetupMode);
+                    if (m === "db" && dbLeads.length === 0) loadDbLeads();
+                  }}
                     className={`flex-1 py-2.5 rounded-xl text-sm font-semibold border transition-all ${
                       setupMode === m
                         ? "bg-violet-600 text-white border-violet-600 shadow-md shadow-violet-200"
                         : "bg-slate-50 text-slate-500 border-slate-200 hover:border-violet-200"
                     }`}>
-                    {m === "demo" ? "◎ Demo-Leads" : "↑ CSV hochladen"}
+                    {label}
                   </button>
                 ))}
+              </div>
+            </div>
+
+            {/* Campaign Picker */}
+            <div className="glass-card p-5">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Kampagne wählen</p>
+              <p className="text-xs text-slate-400 mb-3">Der Agent übernimmt Angebot, Mehrwert und CTA direkt aus der Kampagne.</p>
+              {campaigns.length === 0 ? (
+                <p className="text-xs text-slate-400">Keine Kampagnen gefunden.</p>
+              ) : (
+                <select
+                  value={selectedCampaignId}
+                  onChange={e => setSelectedCampaignId(e.target.value)}
+                  className="w-full text-sm border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-violet-400 transition-colors bg-white">
+                  <option value="">— Kein Kampagnen-Kontext (Demo) —</option>
+                  {campaigns.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              )}
+              {selectedCampaignId && (() => {
+                const camp = campaigns.find(c => c.id === selectedCampaignId);
+                if (!camp) return null;
+                return (
+                  <div className="mt-3 space-y-1 text-xs text-slate-500">
+                    {camp.agentName    && <div className="flex gap-2"><span className="text-slate-400 w-20 shrink-0">Agent:</span><span>{camp.agentName}</span></div>}
+                    {camp.offer        && <div className="flex gap-2"><span className="text-slate-400 w-20 shrink-0">Angebot:</span><span className="truncate">{camp.offer}</span></div>}
+                    {camp.cta          && <div className="flex gap-2"><span className="text-slate-400 w-20 shrink-0">CTA:</span><span className="truncate">{camp.cta}</span></div>}
+                    {camp.targetAudience && <div className="flex gap-2"><span className="text-slate-400 w-20 shrink-0">Zielgruppe:</span><span className="truncate">{camp.targetAudience}</span></div>}
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* DB Leads */}
+            {setupMode === "db" && (
+              <div className="glass-card p-5">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Leads aus Datenbank</p>
+                  <button onClick={loadDbLeads} disabled={dbLeadsLoading}
+                    className="text-xs text-violet-500 hover:text-violet-700 font-semibold transition-colors disabled:opacity-40">
+                    {dbLeadsLoading ? "Lädt…" : "↻ Aktualisieren"}
+                  </button>
+                </div>
+                {dbLeadsLoading ? (
+                  <div className="flex justify-center py-4">
+                    <div className="flex gap-1">
+                      {["bg-violet-400","bg-cyan-400","bg-emerald-400"].map((c,i) => (
+                        <span key={i} className={`w-2 h-2 rounded-full ${c} animate-bounce`} style={{ animationDelay: `${i*0.15}s` }} />
+                      ))}
+                    </div>
+                  </div>
+                ) : dbLeads.length === 0 ? (
+                  <p className="text-xs text-slate-400 text-center py-4">Keine Leads gefunden. Erstelle zuerst eine Kampagne mit Kontakten.</p>
+                ) : (
+                  <p className="text-xs text-emerald-600 font-semibold">✓ {dbLeads.length} Leads geladen</p>
+                )}
+              </div>
+            )}
+
+            {/* Live SMS Panel */}
+            <div className="glass-card p-5">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Live SMS senden</p>
+              <p className="text-xs text-slate-400 mb-3">Generierte Nachricht als echte SMS verschicken. Nummer wird beim Start vorausgefüllt.</p>
+              <div className="flex items-center gap-2">
+                <input
+                  value={liveSmsNumber}
+                  onChange={e => setLiveSmsNumber(e.target.value)}
+                  placeholder="+41786215258"
+                  className="flex-1 text-sm border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-violet-400 transition-colors"
+                />
+                {liveSmsNumber && (
+                  <span className="text-[10px] bg-emerald-50 border border-emerald-200 text-emerald-600 px-2 py-1 rounded-full font-semibold">Bereit</span>
+                )}
               </div>
             </div>
 
@@ -1209,8 +1367,9 @@ function SimulationPageInner() {
               </p>
               <div className="space-y-2">
                 {variations.map((v) => (
-                  <button key={v.id} onClick={() => sendInitialMessage(v)}
-                    className="w-full text-left p-3.5 rounded-xl border border-slate-200 hover:border-violet-400 hover:bg-violet-50 transition-all group">
+                  <div key={v.id} className="rounded-xl border border-slate-200 hover:border-violet-300 transition-all overflow-hidden">
+                    <button onClick={() => sendInitialMessage(v)}
+                      className="w-full text-left p-3.5 hover:bg-violet-50 transition-all group">
                     <div className="flex items-start justify-between gap-2 mb-1.5">
                       <span className="text-xs font-bold text-slate-700 group-hover:text-violet-700">{v.label}</span>
                       <div className="flex items-center gap-1.5 shrink-0">
@@ -1225,7 +1384,33 @@ function SimulationPageInner() {
                     )}
                     <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed">{v.body.split("\n")[0]}</p>
                     <p className="text-[10px] text-slate-400 mt-1.5 italic line-clamp-1">{v.reasoning}</p>
-                  </button>
+                    </button>
+                    {/* Live SMS send row */}
+                    <div className="px-3.5 pb-3 pt-1 bg-slate-50 border-t border-slate-100 flex items-center gap-2">
+                      {liveSmsNumber ? (
+                        <>
+                          <span className="text-[10px] text-slate-500 flex-1 truncate">→ {liveSmsNumber}</span>
+                          <button
+                            onClick={() => sendLiveSms(v.id, v.body)}
+                            disabled={liveSmsStatus[v.id] === "sending" || liveSmsStatus[v.id] === "sent"}
+                            className={`text-[11px] font-semibold px-3 py-1 rounded-lg border transition-all ${
+                              liveSmsStatus[v.id] === "sent"
+                                ? "bg-emerald-50 border-emerald-200 text-emerald-600"
+                                : liveSmsStatus[v.id] === "error"
+                                ? "bg-red-50 border-red-200 text-red-600"
+                                : "bg-violet-50 border-violet-200 text-violet-600 hover:bg-violet-100"
+                            } disabled:opacity-60`}>
+                            {liveSmsStatus[v.id] === "sending" ? "Sendet…"
+                              : liveSmsStatus[v.id] === "sent" ? "✓ Gesendet"
+                              : liveSmsStatus[v.id] === "error" ? "Fehler"
+                              : "▣ Als SMS senden"}
+                          </button>
+                        </>
+                      ) : (
+                        <span className="text-[10px] text-slate-400 italic">Nummer oben eingeben um als SMS zu senden</span>
+                      )}
+                    </div>
+                  </div>
                 ))}
               </div>
             </div>

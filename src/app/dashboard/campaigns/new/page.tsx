@@ -97,6 +97,13 @@ export default function NewCampaignPage() {
     channels: [] as string[],
     file: null as File | null,
     flow: defaultFlow(),
+    // Kampagnen-Kontext (Single Source of Truth)
+    agentName:      "Tanja",
+    agentTone:      "warm_direct",
+    offer:          "",
+    valueProp:      "",
+    cta:            "",
+    targetAudience: "",
   });
 
   const toggleChannel = (ch: string) =>
@@ -157,25 +164,35 @@ export default function NewCampaignPage() {
 
   const handleLaunch = async () => {
     setLaunching(true);
-    await fetch("/api/campaigns", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: form.name,
-        clientId: form.clientId || undefined,
-        channels: form.channels,
-        flow: form.flow,
-        contacts: parsedContacts,
-      }),
-    }).then(async res => {
-      const camp = await res.json();
-      await fetch(`/api/campaigns/${camp.id}`, {
-        method: "PATCH",
+    try {
+      const res = await fetch("/api/campaigns", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "start" }),
+        body: JSON.stringify({
+          name:           form.name,
+          clientId:       form.clientId || undefined,
+          channels:       form.channels,
+          flow:           form.flow,
+          contacts:       parsedContacts,
+          agentName:      form.agentName      || undefined,
+          agentTone:      form.agentTone      || undefined,
+          offer:          form.offer          || undefined,
+          valueProp:      form.valueProp      || undefined,
+          cta:            form.cta            || undefined,
+          targetAudience: form.targetAudience || undefined,
+        }),
       });
-    }).catch(() => {});
-    setTimeout(() => router.push("/dashboard/campaigns"), 800);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(`Fehler: ${(err as { error?: string }).error ?? res.status}`);
+        setLaunching(false);
+        return;
+      }
+      router.push("/dashboard/campaigns");
+    } catch (e) {
+      alert(`Netzwerkfehler: ${e}`);
+      setLaunching(false);
+    }
   };
 
   const STEPS = ["Einrichten", "Flow Designer", "Import", "Starten"];
@@ -246,6 +263,55 @@ export default function NewCampaignPage() {
               ))}
             </div>
           </div>
+          {/* Agent & Kontext */}
+          <div className="pt-4 border-t border-slate-100 space-y-4">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Agent & Kampagnen-Kontext</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-slate-500 block mb-1.5">Agent-Name</label>
+                <input type="text" value={form.agentName}
+                  onChange={e => setForm(f => ({ ...f, agentName: e.target.value }))}
+                  placeholder="Tanja" className={inp} />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1.5">Ton / Stil</label>
+                <select value={form.agentTone}
+                  onChange={e => setForm(f => ({ ...f, agentTone: e.target.value }))}
+                  className={sel}>
+                  <option value="warm_direct">Warm &amp; Direkt</option>
+                  <option value="professional">Professionell</option>
+                  <option value="casual">Locker &amp; Persönlich</option>
+                  <option value="formal">Formell</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1.5">Angebot <span className="text-slate-300">(Was wird angeboten?)</span></label>
+              <input type="text" value={form.offer}
+                onChange={e => setForm(f => ({ ...f, offer: e.target.value }))}
+                placeholder="z.B. Persönliches Fitness-Coaching + Ernährungsplan" className={inp} />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1.5">Mehrwert / Value Prop <span className="text-slate-300">(Was gewinnt der Lead?)</span></label>
+              <textarea value={form.valueProp}
+                onChange={e => setForm(f => ({ ...f, valueProp: e.target.value }))}
+                rows={2} placeholder="z.B. In 12 Wochen nachhaltig abnehmen ohne Verzicht"
+                className={`${inp} resize-none`} />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1.5">Call-to-Action <span className="text-slate-300">(Was soll der Lead tun?)</span></label>
+              <input type="text" value={form.cta}
+                onChange={e => setForm(f => ({ ...f, cta: e.target.value }))}
+                placeholder="z.B. Kostenloses 15-Min Erstgespräch buchen" className={inp} />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1.5">Zielgruppe <span className="text-slate-300">(Wen reaktivierst du?)</span></label>
+              <input type="text" value={form.targetAudience}
+                onChange={e => setForm(f => ({ ...f, targetAudience: e.target.value }))}
+                placeholder="z.B. Ehemalige Kunden die vor 3–12 Monaten aufgehört haben" className={inp} />
+            </div>
+          </div>
+
           <button onClick={() => setStep(2)} disabled={!form.name || form.channels.length === 0}
             className="w-full btn-primary py-3 text-sm disabled:opacity-40 disabled:cursor-not-allowed">
             Weiter → Flow Designer
@@ -533,6 +599,9 @@ export default function NewCampaignPage() {
           <div className="bg-slate-50 border border-slate-200 rounded-xl divide-y divide-slate-100">
             {[
               { label: "Kampagne",   value: form.name },
+              { label: "Agent",      value: `${form.agentName || "Tanja"} · ${form.agentTone || "warm_direct"}` },
+              { label: "Angebot",    value: form.offer || "—" },
+              { label: "CTA",        value: form.cta || "—" },
               { label: "Kanäle",    value: form.channels.map(c => c.toUpperCase()).join(", ") },
               { label: "Flow",      value: `${form.flow.length} Schritte (${form.flow.filter(s => s.type === "condition").length} Conditions)` },
               { label: "Kontakte",  value: parsedContacts.length > 0 ? `${parsedContacts.length} importiert` : form.file?.name ?? "Kein Import" },
