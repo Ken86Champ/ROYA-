@@ -24,6 +24,6 @@ export const supabase = new Proxy({} as SupabaseClient, {
   },
 });
 
-export function genId(prefix: string): string {
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+export function genId(_prefix?: string): string {
+  return crypto.randomUUID();
 }
