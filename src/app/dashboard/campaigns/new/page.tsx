@@ -342,25 +342,29 @@ export default function NewCampaignPage() {
 
           {/* Unternehmensgrundlagen */}
           <div className="pt-4 border-t border-slate-100 space-y-3">
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Unternehmensgrundlagen</p>
-              <button
-                type="button"
-                onClick={handleAutofill}
-                disabled={!form.offer.trim() || autofilling}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all">
-                {autofilling ? (
-                  <><span className="animate-spin inline-block">◌</span> KI generiert…</>
-                ) : (
-                  <><span>✦</span> Autofill mit KI</>
-                )}
-              </button>
-            </div>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Unternehmensgrundlagen</p>
             <div>
-              <label className="text-xs text-slate-500 block mb-1.5">Produkt / Dienstleistung / Service <span className="text-slate-300">(zuerst ausfüllen für Autofill)</span></label>
-              <input type="text" value={form.offer}
-                onChange={e => setForm(f => ({ ...f, offer: e.target.value }))}
-                placeholder="z.B. Persönliches Fitness-Coaching + Ernährungsplan" className={inp} />
+              <label className="text-xs text-slate-500 block mb-1.5">Produkt / Dienstleistung / Service</label>
+              <div className="flex gap-2">
+                <input type="text" value={form.offer}
+                  onChange={e => setForm(f => ({ ...f, offer: e.target.value }))}
+                  placeholder="z.B. Persönliches Fitness-Coaching + Ernährungsplan"
+                  className={`${inp} flex-1`} />
+                <button
+                  type="button"
+                  onClick={handleAutofill}
+                  disabled={!form.offer.trim() || autofilling}
+                  className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all whitespace-nowrap">
+                  {autofilling ? (
+                    <><span className="animate-spin inline-block">◌</span> Generiert…</>
+                  ) : (
+                    <><span>✦</span> KI Autofill</>
+                  )}
+                </button>
+              </div>
+              {!form.offer.trim() && (
+                <p className="text-[11px] text-slate-400 mt-1">Produkt eingeben → KI Autofill klicken → alle Felder werden automatisch ausgefüllt</p>
+              )}
             </div>
             <div>
               <label className="text-xs text-slate-500 block mb-1.5">Value Proposition <span className="text-slate-300">(Kernnutzen für den Lead)</span></label>
