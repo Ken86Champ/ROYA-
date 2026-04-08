@@ -16,7 +16,8 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const { action, flow } = await req.json();
+  const body = await req.json();
+  const { action, flow, aiFramework } = body;
 
   if (action === "start") {
     const campaign = await store.start(id);
@@ -29,6 +30,10 @@ export async function PATCH(
   }
   if (action === "update_flow" && flow) {
     await store.updateFlow(id, flow);
+    return NextResponse.json(await store.getById(id));
+  }
+  if (action === "update_framework" && aiFramework) {
+    await store.updateAIFramework(id, aiFramework);
     return NextResponse.json(await store.getById(id));
   }
 

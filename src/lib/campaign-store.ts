@@ -6,6 +6,54 @@ import type { Channel } from "./conversation-store";
 export type CampaignStatus = "draft" | "active" | "paused" | "completed";
 export type StepType = "opener" | "followup" | "breakup" | "booking" | "condition" | "exit";
 
+// ─── AI Framework ──────────────────────────────────────────────────────────────
+
+export type AIModelId =
+  | "claude-haiku-4-5-20251001"
+  | "claude-sonnet-4-6"
+  | "claude-opus-4-6"
+  | "gpt-4o-mini"      // coming soon
+  | "gpt-4o"           // coming soon
+  | "gemini-2.5-flash"; // coming soon
+
+export const AI_MODELS: { id: AIModelId; label: string; badge: string; provider: "anthropic" | "openai" | "google"; available: boolean; desc: string }[] = [
+  { id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5",   badge: "Schnell",    provider: "anthropic", available: true,  desc: "Günstig · schnell · Routing & Klassifizierung" },
+  { id: "claude-sonnet-4-6",         label: "Claude Sonnet 4.6",  badge: "Standard",   provider: "anthropic", available: true,  desc: "Beste Balance · empfohlen für Reply-Handling" },
+  { id: "claude-opus-4-6",           label: "Claude Opus 4.6",    badge: "Premium",    provider: "anthropic", available: true,  desc: "Stärkstes Modell · schwierige Einwände & High-Value" },
+  { id: "gpt-4o-mini",               label: "GPT-4o mini",        badge: "Bald",       provider: "openai",    available: false, desc: "OpenAI · günstig · agentische Abläufe" },
+  { id: "gpt-4o",                    label: "GPT-4o",             badge: "Bald",       provider: "openai",    available: false, desc: "OpenAI · Frontier · komplexe Workflows" },
+  { id: "gemini-2.5-flash",          label: "Gemini 2.5 Flash",   badge: "Bald",       provider: "google",    available: false, desc: "Google · günstig · Volumen-Workloads" },
+];
+
+export interface AIEscalation {
+  afterTurns: number;         // escalate to premiumModel after N lead turns
+  onIntents: string[];        // e.g. ["objecting","asking_price","booking"]
+}
+
+export interface AIFramework {
+  agentName: string;
+  agentRole: string;
+  tone: string;
+  language: string;
+  standardModel: AIModelId;
+  premiumModel: AIModelId;
+  escalation: AIEscalation;
+  systemPrompt: string;        // custom instructions injected into every call
+  rules: string[];             // e.g. "max_2_sentences","end_with_question"
+}
+
+export const DEFAULT_AI_FRAMEWORK: AIFramework = {
+  agentName: "Lena",
+  agentRole: "KI-Reaktivierungsagentin",
+  tone: "Warm, direkt und menschlich — wie eine Freundin die im Bereich arbeitet",
+  language: "de",
+  standardModel: "claude-sonnet-4-6",
+  premiumModel: "claude-opus-4-6",
+  escalation: { afterTurns: 4, onIntents: ["objecting", "asking_price"] },
+  systemPrompt: "",
+  rules: ["max_2_sentences", "end_with_question", "no_price_in_opener", "use_first_name"],
+};
+
 export interface FlowBranch {
   intent: "hot" | "warm" | "cold" | "question" | "timing" | "no_reply" | "default";
   nextStepIndex: number;   // index in campaign.flow[]
@@ -48,8 +96,6 @@ export interface CampaignStats {
   bookingRate: number;
 }
 
-export type CampaignMode = "draft" | "test" | "live";
-
 export interface Campaign {
   id: string;
   name: string;
@@ -57,24 +103,12 @@ export interface Campaign {
   channels: Channel[];
   status: CampaignStatus;
   flow: FlowStep[];
+  aiFramework: AIFramework;
   contacts: CampaignContact[];
   stats: CampaignStats;
   createdAt: string;
   startedAt?: string;
   completedAt?: string;
-  // Kampagnen-Kontext (Single Source of Truth)
-  agentName?: string;
-  agentTone?: string;
-  companyName?: string;
-  offer?: string;
-  valueProp?: string;
-  painPoint?: string;
-  noConvertReason?: string;
-  cta?: string;
-  bookingLink?: string;
-  targetAudience?: string;
-  leadType?: "b2b" | "b2c";
-  mode?: CampaignMode;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -113,29 +147,18 @@ function rowToContact(r: Record<string, unknown>): CampaignContact {
 
 function rowToCampaign(r: Record<string, unknown>, contacts: CampaignContact[]): Campaign {
   return {
-    id:             r.id as string,
-    name:           r.name as string,
-    clientId:       r.client_id as string | undefined,
-    channels:       r.channels as Channel[],
-    status:         r.status as CampaignStatus,
-    flow:           (r.flow as FlowStep[]) ?? [],
+    id:          r.id as string,
+    name:        r.name as string,
+    clientId:    r.client_id as string | undefined,
+    channels:    r.channels as Channel[],
+    status:      r.status as CampaignStatus,
+    flow:        (r.flow as FlowStep[]) ?? [],
+    aiFramework: (r.ai_framework as AIFramework) ?? DEFAULT_AI_FRAMEWORK,
     contacts,
-    stats:          computeStats(contacts),
-    createdAt:      r.created_at as string,
-    startedAt:      r.started_at as string | undefined,
-    completedAt:    r.completed_at as string | undefined,
-    agentName:        r.agent_name as string | undefined,
-    agentTone:        r.agent_tone as string | undefined,
-    companyName:      r.company_name as string | undefined,
-    offer:            r.offer as string | undefined,
-    valueProp:        r.value_prop as string | undefined,
-    painPoint:        r.pain_point as string | undefined,
-    noConvertReason:  r.no_convert_reason as string | undefined,
-    cta:              r.cta as string | undefined,
-    bookingLink:      r.booking_link as string | undefined,
-    targetAudience:   r.target_audience as string | undefined,
-    leadType:         r.lead_type as "b2b" | "b2c" | undefined,
-    mode:             (r.mode as CampaignMode | undefined) ?? "draft",
+    stats:       computeStats(contacts),
+    createdAt:   r.created_at as string,
+    startedAt:   r.started_at as string | undefined,
+    completedAt: r.completed_at as string | undefined,
   };
 }
 
@@ -198,48 +221,18 @@ export async function create(params: {
   channels: Channel[];
   contacts?: Omit<CampaignContact, "id" | "status" | "currentStep" | "emailAttempts" | "smsAttempts" | "whatsappAttempts">[];
   flow?: FlowStep[];
-  agentName?: string;
-  agentTone?: string;
-  companyName?: string;
-  offer?: string;
-  valueProp?: string;
-  painPoint?: string;
-  noConvertReason?: string;
-  cta?: string;
-  bookingLink?: string;
-  targetAudience?: string;
-  leadType?: "b2b" | "b2c";
+  aiFramework?: AIFramework;
 }): Promise<Campaign> {
   const now = new Date().toISOString();
   const id  = genId("camp");
 
-  const { error: insertError } = await supabase.from("campaigns").insert({
+  await supabase.from("campaigns").insert({
     id, name: params.name, client_id: params.clientId ?? null,
     channels: params.channels, status: "draft",
-    flow: params.flow ?? defaultFlow(), created_at: now,
-    agent_name:        params.agentName        ?? null,
-    agent_tone:        params.agentTone        ?? null,
-    company_name:      params.companyName      ?? null,
-    offer:             params.offer            ?? null,
-    value_prop:        params.valueProp        ?? null,
-    pain_point:        params.painPoint        ?? null,
-    no_convert_reason: params.noConvertReason  ?? null,
-    cta:               params.cta              ?? null,
-    booking_link:      params.bookingLink      ?? null,
-    target_audience:   params.targetAudience   ?? null,
-    lead_type:         params.leadType         ?? null,
-    mode:              "draft",
+    flow: params.flow ?? defaultFlow(),
+    ai_framework: params.aiFramework ?? DEFAULT_AI_FRAMEWORK,
+    created_at: now,
   });
-
-  // If context columns don't exist yet (migration pending), retry without them
-  if (insertError) {
-    const { error: fallbackError } = await supabase.from("campaigns").insert({
-      id, name: params.name, client_id: params.clientId ?? null,
-      channels: params.channels, status: "draft",
-      flow: params.flow ?? defaultFlow(), created_at: now,
-    });
-    if (fallbackError) throw new Error(`Campaign insert failed: ${fallbackError.message}`);
-  }
 
   const contacts: CampaignContact[] = [];
 
@@ -265,14 +258,10 @@ export async function create(params: {
   return {
     id, name: params.name, clientId: params.clientId,
     channels: params.channels, status: "draft",
-    flow: params.flow ?? defaultFlow(), contacts,
+    flow: params.flow ?? defaultFlow(),
+    aiFramework: params.aiFramework ?? DEFAULT_AI_FRAMEWORK,
+    contacts,
     stats: computeStats(contacts), createdAt: now,
-    agentName: params.agentName, agentTone: params.agentTone,
-    companyName: params.companyName, offer: params.offer, valueProp: params.valueProp,
-    painPoint: params.painPoint, noConvertReason: params.noConvertReason,
-    cta: params.cta, bookingLink: params.bookingLink,
-    targetAudience: params.targetAudience, leadType: params.leadType,
-    mode: "draft" as CampaignMode,
   };
 }
 
@@ -360,6 +349,10 @@ export async function switchToAltChannel(
 
 export async function updateFlow(campaignId: string, flow: FlowStep[]): Promise<void> {
   await supabase.from("campaigns").update({ flow }).eq("id", campaignId);
+}
+
+export async function updateAIFramework(campaignId: string, aiFramework: AIFramework): Promise<void> {
+  await supabase.from("campaigns").update({ ai_framework: aiFramework }).eq("id", campaignId);
 }
 
 export async function globalStats() {

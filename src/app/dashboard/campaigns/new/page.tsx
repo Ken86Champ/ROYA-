@@ -1,11 +1,16 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import type { FlowStep, StepType, FlowBranch } from "@/lib/campaign-store";
+import type { FlowStep, StepType, FlowBranch, AIFramework, AIModelId } from "@/lib/campaign-store";
+import { AI_MODELS, DEFAULT_AI_FRAMEWORK } from "@/lib/campaign-store";
 import type { Client } from "@/lib/client-store";
+
+// ─── STYLING ──────────────────────────────────────────────────────────────────
 
 const inp = "w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-slate-800 text-sm placeholder-slate-300 focus:outline-none focus:border-violet-400 transition-colors";
 const sel = `${inp} cursor-pointer`;
+
+// ─── FLOW STEP META ───────────────────────────────────────────────────────────
 
 const STEP_TYPE_META: Record<StepType, { label: string; color: string; bg: string; border: string; icon: string; desc: string }> = {
   opener:    { label: "Opener",     color: "text-violet-600",  bg: "bg-violet-50",  border: "border-violet-200",  icon: "◎", desc: "Erster Kontakt — neugierig machen, kein Pitch" },
@@ -22,134 +27,190 @@ const INTENT_LABELS: Record<FlowBranch["intent"], string> = {
   question: "Frage", timing: "Timing-Problem", no_reply: "Keine Antwort", default: "Default (sonst)",
 };
 
+// ─── CSV PARSER ───────────────────────────────────────────────────────────────
+
+function parseCSV(text: string) {
+  const lines = text.trim().split(/\r?\n/).filter(Boolean);
+  if (lines.length < 2) return null;
+  const split = (line: string) => {
+    const res: string[] = []; let cur = ""; let inQ = false;
+    for (const ch of line) {
+      if (ch === '"') { inQ = !inQ; }
+      else if ((ch === "," || ch === ";") && !inQ) { res.push(cur.trim()); cur = ""; }
+      else cur += ch;
+    }
+    res.push(cur.trim()); return res;
+  };
+  const headers = split(lines[0]);
+  const rows = lines.slice(1).map(l => {
+    const cols = split(l); const o: Record<string, string> = {};
+    headers.forEach((h, i) => { o[h] = cols[i] ?? ""; }); return o;
+  });
+  return { headers, rows };
+}
+
+function suggestMapping(h: string): string {
+  const s = h.toLowerCase().replace(/[_\s-]/g, "");
+  if (/email|mail/.test(s)) return "email";
+  if (/phone|tel|mobil/.test(s)) return "phone";
+  if (/firstname|vorname/.test(s)) return "firstName";
+  if (/lastname|nachname/.test(s)) return "lastName";
+  if (/name/.test(s)) return "fullName";
+  if (/company|firma|unternehmen/.test(s)) return "company";
+  if (/title|position|jobtitel/.test(s)) return "jobTitle";
+  if (/industry|branche/.test(s)) return "industry";
+  if (/city|stadt/.test(s)) return "city";
+  if (/channel|kanal/.test(s)) return "channel";
+  return "ignore";
+}
+
+const STANDARD_FIELDS = [
+  { id: "ignore",    label: "— Ignorieren —" },
+  { id: "firstName", label: "Vorname" },
+  { id: "lastName",  label: "Nachname" },
+  { id: "fullName",  label: "Vollst. Name" },
+  { id: "email",     label: "E-Mail" },
+  { id: "phone",     label: "Telefon" },
+  { id: "company",   label: "Unternehmen" },
+  { id: "jobTitle",  label: "Position" },
+  { id: "industry",  label: "Branche" },
+  { id: "city",      label: "Stadt" },
+  { id: "channel",   label: "Kanal (email/sms/whatsapp)" },
+];
+
+// ─── FLOW HELPERS ─────────────────────────────────────────────────────────────
+
 function genId() { return `step_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`; }
 
 function defaultFlow(): FlowStep[] {
   return [
-    { id: genId(), type: "opener",   label: "Opener",       delayDays: 0,  condition: "no_reply", messageTemplate: "" },
-    { id: genId(), type: "followup", label: "Follow-up 1",  delayDays: 3,  condition: "no_reply", messageTemplate: "" },
-    { id: genId(), type: "followup", label: "Follow-up 2",  delayDays: 7,  condition: "no_reply", messageTemplate: "" },
-    { id: genId(), type: "breakup",  label: "Break-up",     delayDays: 14, condition: "no_reply", messageTemplate: "" },
+    { id: genId(), type: "opener",   label: "Opener",      delayDays: 0,  condition: "no_reply", messageTemplate: "" },
+    { id: genId(), type: "followup", label: "Follow-up 1", delayDays: 3,  condition: "no_reply", messageTemplate: "" },
+    { id: genId(), type: "followup", label: "Follow-up 2", delayDays: 7,  condition: "no_reply", messageTemplate: "" },
+    { id: genId(), type: "breakup",  label: "Break-up",    delayDays: 14, condition: "no_reply", messageTemplate: "" },
   ];
 }
 
-interface ParsedContact {
-  name: string;
-  contact: string;
-  channel: string;
-  altContact?: string;
-  altChannel?: string;
+// ─── STEP BAR ─────────────────────────────────────────────────────────────────
+
+type WizardStep = 1 | 2 | 3 | 4 | 5 | 6;
+
+const WIZARD_STEPS = [
+  { n: 1, label: "Upload" },
+  { n: 2, label: "Felder" },
+  { n: 3, label: "Einrichten" },
+  { n: 4, label: "KI-Setup" },
+  { n: 5, label: "Flow" },
+  { n: 6, label: "Starten" },
+];
+
+function StepBar({ current, maxReached, onNavigate }: {
+  current: WizardStep;
+  maxReached: WizardStep;
+  onNavigate: (s: WizardStep) => void;
+}) {
+  // Show condensed bar for 6 steps
+  return (
+    <div className="flex items-center gap-0 mb-8">
+      {WIZARD_STEPS.map((s, i) => {
+        const clickable = s.n !== current && s.n <= maxReached;
+        return (
+          <div key={s.n} className="flex items-center">
+            <button
+              disabled={!clickable && s.n !== current}
+              onClick={() => clickable && onNavigate(s.n as WizardStep)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-sm font-medium transition-all ${
+                s.n === current      ? "bg-violet-600 text-white shadow-md shadow-violet-200" :
+                s.n < current        ? "bg-violet-50 text-violet-600 hover:bg-violet-100 cursor-pointer" :
+                s.n <= maxReached    ? "bg-slate-100 text-slate-500 hover:bg-slate-200 cursor-pointer" :
+                "text-slate-300 cursor-not-allowed"
+              }`}>
+              <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${
+                s.n === current ? "bg-white/20 text-white" :
+                s.n < current   ? "bg-violet-200 text-violet-700" : "bg-slate-200 text-slate-400"
+              }`}>{s.n < current ? "✓" : s.n}</span>
+              {s.label}
+            </button>
+            {i < WIZARD_STEPS.length - 1 && <div className={`w-6 h-[2px] mx-1 ${s.n < current ? "bg-violet-300" : "bg-slate-200"}`} />}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
-function parseCSV(text: string): ParsedContact[] {
-  const lines = text.trim().split(/\r?\n/);
-  if (lines.length < 2) return [];
-
-  const headers = lines[0].split(",").map(h => h.trim().toLowerCase().replace(/[^a-z_]/g, ""));
-  const idx = (names: string[]) => names.reduce<number>((found, n) => found >= 0 ? found : headers.indexOf(n), -1);
-
-  const nameIdx    = idx(["name", "kontakt", "contact_name"]);
-  const contactIdx = idx(["contact", "email", "phone", "telefon", "nummer"]);
-  const channelIdx = idx(["channel", "kanal"]);
-  const altContactIdx = idx(["alt_contact", "altcontact", "alt_email", "alt_phone"]);
-  const altChannelIdx = idx(["alt_channel", "altchannel"]);
-
-  const results: ParsedContact[] = [];
-  for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(",").map(c => c.trim().replace(/^"|"$/g, ""));
-    if (!cols.length || !cols[0]) continue;
-
-    const name    = nameIdx >= 0    ? cols[nameIdx]    ?? "" : cols[0] ?? "";
-    const contact = contactIdx >= 0 ? cols[contactIdx] ?? "" : cols[1] ?? "";
-    if (!name || !contact) continue;
-
-    const rawChannel = channelIdx >= 0 ? (cols[channelIdx] ?? "").toLowerCase() : "";
-    const channel = ["email", "sms", "whatsapp"].includes(rawChannel) ? rawChannel
-      : contact.includes("@") ? "email" : "sms";
-
-    const row: ParsedContact = { name, contact, channel };
-    if (altContactIdx >= 0 && cols[altContactIdx]) row.altContact = cols[altContactIdx];
-    if (altChannelIdx >= 0 && cols[altChannelIdx]) {
-      const ac = cols[altChannelIdx].toLowerCase();
-      if (["email","sms","whatsapp"].includes(ac)) row.altChannel = ac;
-    }
-    results.push(row);
-  }
-  return results;
-}
+// ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 
 export default function NewCampaignPage() {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
-  const [step, setStep] = useState(1);
+  const [step, setStep] = useState<WizardStep>(1);
+  const [maxStep, setMaxStep] = useState<WizardStep>(1);
+  const [dragging, setDragging] = useState(false);
   const [launching, setLaunching] = useState(false);
-  const [autofilling, setAutofilling] = useState(false);
   const [editingStep, setEditingStep] = useState<string | null>(null);
   const [clients, setClients] = useState<Client[]>([]);
-  const [parsedContacts, setParsedContacts] = useState<ParsedContact[]>([]);
+
+  // Step 1 — Upload
+  const [file, setFile] = useState<File | null>(null);
+  const [parsed, setParsed] = useState<ReturnType<typeof parseCSV>>(null);
+  const [parseError, setParseError] = useState("");
+
+  // Step 2 — Column mapping
+  const [mappings, setMappings] = useState<{ csvColumn: string; standardField: string }[]>([]);
+
+  // Steps 3–5 — Campaign form
+  const [form, setForm] = useState({
+    name: "",
+    clientId: "",
+    channels: [] as string[],
+    flow: defaultFlow(),
+    aiFramework: { ...DEFAULT_AI_FRAMEWORK } as AIFramework,
+  });
 
   useEffect(() => {
     fetch("/api/clients").then(r => r.json()).then(setClients).catch(() => {});
   }, []);
 
-  const [form, setForm] = useState({
-    name:            "",
-    clientId:        "",
-    channels:        [] as string[],
-    file:            null as File | null,
-    flow:            defaultFlow(),
-    // Kampagnen-Kontext (Single Source of Truth)
-    agentName:        "Tanja",
-    agentTone:        "warm_direct",
-    companyName:      "",
-    offer:            "",
-    valueProp:        "",
-    painPoint:        "",
-    noConvertReason:  "",
-    cta:              "",
-    bookingLink:      "",
-    targetAudience:   "",
-    leadType:         "b2c" as "b2b" | "b2c",
-  });
-
-  const handleAutofill = async () => {
-    if (!form.offer.trim()) return;
-    setAutofilling(true);
-    try {
-      const res = await fetch("/api/campaigns/autofill", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ companyName: form.companyName, offer: form.offer, leadType: form.leadType }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setForm(f => ({
-          ...f,
-          valueProp:       data.valueProp       || f.valueProp,
-          painPoint:       data.painPoint       || f.painPoint,
-          noConvertReason: data.noConvertReason || f.noConvertReason,
-          cta:             data.cta             || f.cta,
-          targetAudience:  data.targetAudience  || f.targetAudience,
-        }));
-      }
-    } finally {
-      setAutofilling(false);
-    }
+  const goToStep = (s: WizardStep) => {
+    setStep(s);
+    if (s > maxStep) setMaxStep(s);
   };
 
   const toggleChannel = (ch: string) =>
     setForm(f => ({ ...f, channels: f.channels.includes(ch) ? f.channels.filter(c => c !== ch) : [...f.channels, ch] }));
 
-  const handleFile = (file: File) => {
-    setForm(f => ({ ...f, file }));
+  const handleFile = (f: File) => {
+    setParseError("");
+    setFile(f);
     const reader = new FileReader();
     reader.onload = e => {
-      const text = e.target?.result as string;
-      setParsedContacts(parseCSV(text));
+      const result = parseCSV(e.target?.result as string);
+      if (!result) { setParseError("CSV konnte nicht gelesen werden."); return; }
+      setParsed(result);
+      setMappings(result.headers.map(h => ({ csvColumn: h, standardField: suggestMapping(h) })));
     };
-    reader.readAsText(file);
+    reader.readAsText(f, "UTF-8");
   };
 
+  // Build contacts from mappings
+  const buildContacts = () => {
+    if (!parsed) return [];
+    return parsed.rows.map(row => {
+      const obj: Record<string, string> = {};
+      mappings.forEach(({ csvColumn, standardField }) => {
+        if (standardField !== "ignore") obj[standardField] = row[csvColumn] || "";
+      });
+      const name = obj.fullName || [obj.firstName, obj.lastName].filter(Boolean).join(" ") || "";
+      const contact = obj.email || obj.phone || "";
+      const rawChannel = (obj.channel || "").toLowerCase();
+      const channel = ["email", "sms", "whatsapp"].includes(rawChannel) ? rawChannel
+        : contact.includes("@") ? "email" : "sms";
+      return { name, contact, channel, ...obj };
+    }).filter(c => c.contact);
+  };
+
+  // Flow step helpers
   const updateFlowStep = (id: string, patch: Partial<FlowStep>) =>
     setForm(f => ({ ...f, flow: f.flow.map(s => s.id === id ? { ...s, ...patch } : s) }));
 
@@ -168,7 +229,7 @@ export default function NewCampaignPage() {
       ...s, branches: (s.branches ?? []).filter((_, i) => i !== branchIdx)
     })}));
 
-  const addStep = (type: StepType) => {
+  const addFlowStep = (type: StepType) => {
     const last = form.flow[form.flow.length - 1];
     const newStep: FlowStep = {
       id: genId(), type, label: STEP_TYPE_META[type].label,
@@ -180,10 +241,10 @@ export default function NewCampaignPage() {
     setEditingStep(newStep.id);
   };
 
-  const removeStep = (id: string) =>
+  const removeFlowStep = (id: string) =>
     setForm(f => ({ ...f, flow: f.flow.filter(s => s.id !== id) }));
 
-  const moveStep = (id: string, dir: -1 | 1) => {
+  const moveFlowStep = (id: string, dir: -1 | 1) => {
     setForm(f => {
       const arr = [...f.flow];
       const i = arr.findIndex(s => s.id === id);
@@ -195,77 +256,164 @@ export default function NewCampaignPage() {
 
   const handleLaunch = async () => {
     setLaunching(true);
+    const contacts = buildContacts();
     try {
       const res = await fetch("/api/campaigns", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name:           form.name,
-          clientId:       form.clientId || undefined,
-          channels:       form.channels,
-          flow:           form.flow,
-          contacts:       parsedContacts,
-          agentName:       form.agentName       || undefined,
-          agentTone:       form.agentTone       || undefined,
-          companyName:     form.companyName     || undefined,
-          offer:           form.offer           || undefined,
-          valueProp:       form.valueProp       || undefined,
-          painPoint:       form.painPoint       || undefined,
-          noConvertReason: form.noConvertReason || undefined,
-          cta:             form.cta             || undefined,
-          bookingLink:     form.bookingLink     || undefined,
-          targetAudience:  form.targetAudience  || undefined,
-          leadType:        form.leadType        || undefined,
+          name: form.name,
+          clientId: form.clientId || undefined,
+          channels: form.channels,
+          flow: form.flow,
+          aiFramework: form.aiFramework,
+          contacts,
         }),
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        alert(`Fehler: ${(err as { error?: string }).error ?? res.status}`);
-        setLaunching(false);
-        return;
-      }
-      router.push("/dashboard/campaigns");
-    } catch (e) {
-      alert(`Netzwerkfehler: ${e}`);
+      const camp = await res.json();
+      router.push(`/dashboard/campaigns/${camp.id}/simulate`);
+    } catch {
       setLaunching(false);
     }
   };
 
-  const STEPS = ["Einrichten", "Flow Designer", "Import", "Starten"];
+  const contacts = buildContacts();
 
   return (
     <div className="p-8 max-w-3xl overflow-auto h-full">
-      <div className="mb-8">
+      <div className="mb-6">
         <button onClick={() => router.push("/dashboard/campaigns")}
-          className="text-slate-400 hover:text-slate-700 text-sm flex items-center gap-2 mb-4 transition-colors">
-          ← Zurück
+          className="text-sm text-slate-400 hover:text-slate-700 transition-colors flex items-center gap-1 mb-4">
+          ← Zurück zu Kampagnen
         </button>
-        <h1 className="text-2xl font-bold text-slate-900">Neue Kampagne</h1>
-        <p className="text-slate-400 text-sm mt-1">Autonome Reaktivierungskampagne mit KI-Flow aufbauen</p>
+        <h1 className="text-2xl font-bold text-slate-900">Kampagnen-Engine</h1>
+        <p className="text-slate-400 text-sm mt-1">In 5 Schritten von der CSV zur vollständigen Kampagne</p>
       </div>
 
-      {/* Step indicator */}
-      <div className="flex items-center mb-8">
-        {STEPS.map((label, i) => {
-          const s = i + 1; const done = s < step; const active = s === step;
-          return (
-            <div key={label} className="flex items-center flex-1 last:flex-none">
-              <button onClick={() => s < step && setStep(s)} className="flex items-center gap-2 cursor-pointer">
-                <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
-                  done ? "bg-emerald-500 text-white" : active ? "bg-violet-600 text-white" : "bg-slate-100 text-slate-400"
-                }`}>{done ? "✓" : s}</div>
-                <span className={`text-xs font-medium whitespace-nowrap ${
-                  active ? "text-slate-800" : done ? "text-slate-500" : "text-slate-300"
-                }`}>{label}</span>
-              </button>
-              {i < STEPS.length - 1 && <div className={`flex-1 h-px mx-3 ${s < step ? "bg-emerald-300" : "bg-slate-200"}`} />}
-            </div>
-          );
-        })}
-      </div>
+      <StepBar current={step} maxReached={maxStep} onNavigate={goToStep} />
 
-      {/* ── Step 1: Setup ── */}
+      {/* ── STEP 1: Upload ── */}
       {step === 1 && (
+        <div className="glass-card p-8">
+          <h2 className="text-lg font-semibold text-slate-900 mb-1">Kontaktliste hochladen</h2>
+          <p className="text-slate-400 text-sm mb-6">CSV-Datei mit Kontakten — die Engine erkennt die Felder automatisch.</p>
+          <div
+            onDragOver={e => { e.preventDefault(); setDragging(true); }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={e => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
+            onClick={() => fileRef.current?.click()}
+            className={`border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer transition-all ${
+              dragging ? "border-violet-400 bg-violet-50" :
+              file      ? "border-emerald-300 bg-emerald-50" :
+              "border-slate-200 hover:border-violet-300 hover:bg-slate-50"
+            }`}>
+            <input ref={fileRef} type="file" accept=".csv,.txt" className="hidden"
+              onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
+            {file ? (
+              <>
+                <div className="w-16 h-16 rounded-2xl bg-emerald-100 border border-emerald-200 flex items-center justify-center mx-auto mb-4">
+                  <span className="text-3xl text-emerald-500">✓</span>
+                </div>
+                <p className="text-emerald-700 font-semibold text-lg">{file.name}</p>
+                <p className="text-emerald-600 text-sm mt-1">{parsed?.rows.length ?? 0} Kontakte · {parsed?.headers.length ?? 0} Spalten · Klicken zum Ersetzen</p>
+              </>
+            ) : (
+              <>
+                <div className="w-16 h-16 rounded-2xl bg-violet-50 border border-violet-100 flex items-center justify-center mx-auto mb-4">
+                  <span className="text-3xl text-violet-300">↑</span>
+                </div>
+                <p className="text-slate-600 font-semibold">CSV hier hineinziehen oder klicken</p>
+                <p className="text-slate-400 text-sm mt-1">.csv, .txt · Unbegrenzte Kontakte</p>
+              </>
+            )}
+          </div>
+          {parseError && <p className="text-red-500 text-sm mt-3">{parseError}</p>}
+          <div className="mt-5 p-4 rounded-xl bg-slate-50 border border-slate-200">
+            <p className="text-xs font-semibold text-slate-500 mb-1.5">Beispiel-Format:</p>
+            <code className="text-xs text-slate-600 font-mono">
+              Vorname,Nachname,E-Mail,Unternehmen,Kanal<br/>
+              Anna,Müller,a.mueller@firma.ch,Firma AG,email
+            </code>
+          </div>
+          <div className="flex justify-end mt-6">
+            <button disabled={!parsed} onClick={() => goToStep(2)}
+              className="px-6 py-2.5 bg-violet-600 text-white font-semibold rounded-xl disabled:opacity-40 hover:bg-violet-700 transition-all">
+              Weiter → Felder zuordnen
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── STEP 2: Column mapping ── */}
+      {step === 2 && parsed && (
+        <div className="glass-card p-8">
+          <div className="flex items-start justify-between mb-6">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900 mb-1">Spalten zuordnen</h2>
+              <p className="text-slate-400 text-sm">Engine-Vorschläge prüfen und bei Bedarf anpassen.</p>
+            </div>
+            <span className="badge bg-violet-50 text-violet-600 border border-violet-100">{parsed.headers.length} Spalten</span>
+          </div>
+          <div className="space-y-2 mb-6">
+            <div className="grid grid-cols-3 gap-4 px-4 pb-2">
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">CSV-Spalte</span>
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Beispielwert</span>
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Internes Feld</span>
+            </div>
+            {mappings.map((m, i) => (
+              <div key={m.csvColumn} className="grid grid-cols-3 gap-4 items-center p-3.5 rounded-xl bg-slate-50 border border-slate-200 hover:border-violet-200 transition-colors">
+                <div className="flex items-center gap-2">
+                  <span className="w-5 h-5 rounded-md bg-white border border-slate-200 flex items-center justify-center text-[10px] font-bold text-slate-400">{i + 1}</span>
+                  <span className="text-sm font-medium text-slate-800 truncate">{m.csvColumn}</span>
+                </div>
+                <span className="text-xs text-slate-400 font-mono truncate">{parsed.rows[0]?.[m.csvColumn] || "—"}</span>
+                <select value={m.standardField}
+                  onChange={e => { const u = [...mappings]; u[i] = { ...u[i], standardField: e.target.value }; setMappings(u); }}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-700 focus:outline-none focus:border-violet-400">
+                  {STANDARD_FIELDS.map(f => <option key={f.id} value={f.id}>{f.label}</option>)}
+                </select>
+              </div>
+            ))}
+          </div>
+          {/* Preview */}
+          <div className="rounded-xl border border-slate-200 overflow-hidden mb-6">
+            <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-200">
+              <p className="text-xs font-semibold text-slate-500">Vorschau (erste 3 Zeilen)</p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-slate-200">
+                    {mappings.filter(m => m.standardField !== "ignore").map(m => (
+                      <th key={m.csvColumn} className="px-3 py-2 text-left font-semibold text-slate-500">
+                        {STANDARD_FIELDS.find(f => f.id === m.standardField)?.label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {parsed.rows.slice(0, 3).map((row, ri) => (
+                    <tr key={ri} className="border-b border-slate-100 last:border-0">
+                      {mappings.filter(m => m.standardField !== "ignore").map(m => (
+                        <td key={m.csvColumn} className="px-3 py-2 text-slate-700 font-mono">{row[m.csvColumn] || "—"}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div className="flex justify-between">
+            <button onClick={() => setStep(1)} className="px-5 py-2.5 text-slate-500 hover:text-slate-800 text-sm font-medium transition-colors">← Zurück</button>
+            <button onClick={() => goToStep(3)} className="px-6 py-2.5 bg-violet-600 text-white font-semibold rounded-xl hover:bg-violet-700 transition-all">
+              Weiter → Einrichten
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── STEP 3: Setup ── */}
+      {step === 3 && (
         <div className="glass-card p-6 space-y-5">
           <h2 className="text-base font-semibold text-slate-800">Kampagne einrichten</h2>
           <div>
@@ -299,126 +447,155 @@ export default function NewCampaignPage() {
               ))}
             </div>
           </div>
-          {/* Agent-Konfiguration */}
-          <div className="pt-4 border-t border-slate-100 space-y-3">
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Agent-Konfiguration</p>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs text-slate-500 block mb-1.5">Agent-Name</label>
-                <input type="text" value={form.agentName}
-                  onChange={e => setForm(f => ({ ...f, agentName: e.target.value }))}
-                  placeholder="Tanja" className={inp} />
-              </div>
-              <div>
-                <label className="text-xs text-slate-500 block mb-1.5">Ton / Stil</label>
-                <select value={form.agentTone}
-                  onChange={e => setForm(f => ({ ...f, agentTone: e.target.value }))}
-                  className={sel}>
-                  <option value="warm_direct">Warm &amp; Direkt</option>
-                  <option value="professional">Professionell</option>
-                  <option value="casual">Locker &amp; Persönlich</option>
-                  <option value="formal">Formell</option>
-                </select>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs text-slate-500 block mb-1.5">Lead-Typ</label>
-                <select value={form.leadType}
-                  onChange={e => setForm(f => ({ ...f, leadType: e.target.value as "b2b" | "b2c" }))}
-                  className={sel}>
-                  <option value="b2c">B2C — Privatpersonen</option>
-                  <option value="b2b">B2B — Unternehmen</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-xs text-slate-500 block mb-1.5">Unternehmensname</label>
-                <input type="text" value={form.companyName}
-                  onChange={e => setForm(f => ({ ...f, companyName: e.target.value }))}
-                  placeholder="z.B. FitLife Studio AG" className={inp} />
-              </div>
-            </div>
+          <div className="flex gap-3 pt-2">
+            <button onClick={() => setStep(2)} className="flex-1 btn-secondary py-2.5 text-sm">← Zurück</button>
+            <button onClick={() => goToStep(4)} disabled={!form.name || form.channels.length === 0}
+              className="flex-1 btn-primary py-3 text-sm disabled:opacity-40 disabled:cursor-not-allowed">
+              Weiter → KI-Setup
+            </button>
           </div>
-
-          {/* Unternehmensgrundlagen */}
-          <div className="pt-4 border-t border-slate-100 space-y-3">
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Unternehmensgrundlagen</p>
-            <div>
-              <label className="text-xs text-slate-500 block mb-1.5">Produkt / Dienstleistung / Service</label>
-              <div className="flex gap-2">
-                <input type="text" value={form.offer}
-                  onChange={e => setForm(f => ({ ...f, offer: e.target.value }))}
-                  placeholder="z.B. Persönliches Fitness-Coaching + Ernährungsplan"
-                  className={`${inp} flex-1`} />
-                <button
-                  type="button"
-                  onClick={handleAutofill}
-                  disabled={!form.offer.trim() || autofilling}
-                  className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all whitespace-nowrap">
-                  {autofilling ? (
-                    <><span className="animate-spin inline-block">◌</span> Generiert…</>
-                  ) : (
-                    <><span>✦</span> KI Autofill</>
-                  )}
-                </button>
-              </div>
-              {!form.offer.trim() && (
-                <p className="text-[11px] text-slate-400 mt-1">Produkt eingeben → KI Autofill klicken → alle Felder werden automatisch ausgefüllt</p>
-              )}
-            </div>
-            <div>
-              <label className="text-xs text-slate-500 block mb-1.5">Value Proposition <span className="text-slate-300">(Kernnutzen für den Lead)</span></label>
-              <textarea value={form.valueProp}
-                onChange={e => setForm(f => ({ ...f, valueProp: e.target.value }))}
-                rows={2} placeholder="z.B. In 12 Wochen nachhaltig Gewicht verlieren ohne Verzicht — mit persönlichem Trainings- und Ernährungsplan"
-                className={`${inp} resize-none`} />
-            </div>
-            <div>
-              <label className="text-xs text-slate-500 block mb-1.5">Pain Point <span className="text-slate-300">(Was nervt den Lead?)</span></label>
-              <input type="text" value={form.painPoint}
-                onChange={e => setForm(f => ({ ...f, painPoint: e.target.value }))}
-                placeholder="z.B. Kein Durchhalten alleine, fehlende Struktur und Motivation" className={inp} />
-            </div>
-            <div>
-              <label className="text-xs text-slate-500 block mb-1.5">Warum nicht konvertiert? <span className="text-slate-300">(Drop-off Grund)</span></label>
-              <input type="text" value={form.noConvertReason}
-                onChange={e => setForm(f => ({ ...f, noConvertReason: e.target.value }))}
-                placeholder="z.B. Timing, Preis, anderes Programm ausprobiert" className={inp} />
-            </div>
-            <div>
-              <label className="text-xs text-slate-500 block mb-1.5">Zielgruppe</label>
-              <input type="text" value={form.targetAudience}
-                onChange={e => setForm(f => ({ ...f, targetAudience: e.target.value }))}
-                placeholder="z.B. Ehemalige Kunden die vor 3–12 Monaten aufgehört haben" className={inp} />
-            </div>
-          </div>
-
-          {/* CTA */}
-          <div className="pt-4 border-t border-slate-100 space-y-3">
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Call-to-Action</p>
-            <div>
-              <label className="text-xs text-slate-500 block mb-1.5">CTA-Ziel <span className="text-slate-300">(Was soll der Lead tun?)</span></label>
-              <input type="text" value={form.cta}
-                onChange={e => setForm(f => ({ ...f, cta: e.target.value }))}
-                placeholder="z.B. Kostenloses 15-Min Erstgespräch buchen" className={inp} />
-            </div>
-            <div>
-              <label className="text-xs text-slate-500 block mb-1.5">Booking-Link <span className="text-slate-300">(Kalender-URL)</span></label>
-              <input type="text" value={form.bookingLink}
-                onChange={e => setForm(f => ({ ...f, bookingLink: e.target.value }))}
-                placeholder="https://cal.com/deinname/erstgespraech" className={inp} />
-            </div>
-          </div>
-
-          <button onClick={() => setStep(2)} disabled={!form.name || form.channels.length === 0}
-            className="w-full btn-primary py-3 text-sm disabled:opacity-40 disabled:cursor-not-allowed">
-            Weiter → Flow Designer
-          </button>
         </div>
       )}
 
-      {/* ── Step 2: Flow Designer ── */}
-      {step === 2 && (
+      {/* ── STEP 4: KI-Setup ── */}
+      {step === 4 && (() => {
+        const fw = form.aiFramework;
+        const setFw = (patch: Partial<AIFramework>) =>
+          setForm(f => ({ ...f, aiFramework: { ...f.aiFramework, ...patch } }));
+        const toggleRule = (r: string) => setFw({
+          rules: fw.rules.includes(r) ? fw.rules.filter(x => x !== r) : [...fw.rules, r]
+        });
+        const RULES = [
+          { id: "max_2_sentences",    label: "Max. 2 Sätze pro Antwort" },
+          { id: "end_with_question",  label: "Immer mit Frage abschliessen" },
+          { id: "no_price_in_opener", label: "Kein Preis im ersten Kontakt" },
+          { id: "use_first_name",     label: "Lead mit Vornamen ansprechen" },
+          { id: "no_emoji",           label: "Keine Emojis" },
+          { id: "swiss_german_ok",    label: "Schweizerdeutsch erlaubt" },
+        ];
+        return (
+          <div className="space-y-4">
+            {/* Agent Identity */}
+            <div className="glass-card p-6 space-y-4">
+              <h2 className="text-base font-semibold text-slate-800">KI-Agenten-Profil</h2>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs text-slate-500 block mb-1.5">Agent-Name</label>
+                  <input value={fw.agentName} onChange={e => setFw({ agentName: e.target.value })} className={inp} placeholder="Lena" />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500 block mb-1.5">Rolle</label>
+                  <input value={fw.agentRole} onChange={e => setFw({ agentRole: e.target.value })} className={inp} placeholder="Reaktivierungsagentin" />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1.5">Ton & Persönlichkeit</label>
+                <input value={fw.tone} onChange={e => setFw({ tone: e.target.value })} className={inp} placeholder="Warm, direkt und menschlich…" />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1.5">Sprache</label>
+                <select value={fw.language} onChange={e => setFw({ language: e.target.value })} className={sel}>
+                  <option value="de">Deutsch</option>
+                  <option value="en">English</option>
+                  <option value="fr">Français</option>
+                  <option value="it">Italiano</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Model Routing */}
+            <div className="glass-card p-6 space-y-4">
+              <div>
+                <h2 className="text-base font-semibold text-slate-800">Modell-Routing</h2>
+                <p className="text-xs text-slate-400 mt-0.5">Standard für normale Gespräche · Premium für komplexe Fälle</p>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                {(["standardModel", "premiumModel"] as const).map(key => (
+                  <div key={key}>
+                    <label className="text-xs text-slate-500 block mb-1.5">
+                      {key === "standardModel" ? "Standard-Modell" : "Premium-Modell"}
+                    </label>
+                    <div className="space-y-2">
+                      {AI_MODELS.map(m => (
+                        <button key={m.id} disabled={!m.available}
+                          onClick={() => setFw({ [key]: m.id as AIModelId })}
+                          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border text-left transition-all text-sm ${
+                            fw[key] === m.id
+                              ? "bg-violet-50 border-violet-400 text-violet-900"
+                              : m.available
+                              ? "bg-white border-slate-200 text-slate-700 hover:border-violet-300"
+                              : "bg-slate-50 border-slate-100 text-slate-300 cursor-not-allowed"
+                          }`}>
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
+                            m.provider === "anthropic" ? "bg-violet-100 text-violet-700" :
+                            m.provider === "openai"    ? "bg-emerald-100 text-emerald-700" :
+                            "bg-blue-100 text-blue-700"
+                          }`}>{m.badge}</span>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium truncate text-xs">{m.label}</p>
+                            <p className="text-[10px] text-slate-400 truncate">{m.desc}</p>
+                          </div>
+                          {fw[key] === m.id && <span className="text-violet-500 text-xs shrink-0">✓</span>}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="grid grid-cols-2 gap-4 pt-2 border-t border-slate-100">
+                <div>
+                  <label className="text-xs text-slate-500 block mb-1.5">Eskalation nach (Turns)</label>
+                  <input type="number" min={1} max={20} value={fw.escalation.afterTurns}
+                    onChange={e => setFw({ escalation: { ...fw.escalation, afterTurns: Number(e.target.value) } })}
+                    className={inp} />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500 block mb-1.5">Eskalations-Trigger</label>
+                  <p className="text-xs text-slate-400 mt-1">Auto: bei Preisfragen, Einwänden, Buchungsbereitschaft</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Conversation Rules */}
+            <div className="glass-card p-6 space-y-4">
+              <h2 className="text-base font-semibold text-slate-800">Gesprächsregeln</h2>
+              <div className="grid grid-cols-2 gap-2">
+                {RULES.map(r => (
+                  <button key={r.id} onClick={() => toggleRule(r.id)}
+                    className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border text-left text-xs transition-all ${
+                      fw.rules.includes(r.id)
+                        ? "bg-violet-50 border-violet-300 text-violet-800"
+                        : "bg-white border-slate-200 text-slate-600 hover:border-violet-200"
+                    }`}>
+                    <span className={`w-4 h-4 rounded flex items-center justify-center shrink-0 ${fw.rules.includes(r.id) ? "bg-violet-600 text-white" : "bg-slate-100 text-slate-400"}`}>
+                      {fw.rules.includes(r.id) ? "✓" : ""}
+                    </span>
+                    {r.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Custom system prompt */}
+              <div>
+                <label className="text-xs text-slate-500 block mb-1.5">
+                  Custom-Anweisungen <span className="text-slate-300">(optional — wird in jeden Prompt injiziert)</span>
+                </label>
+                <textarea value={fw.systemPrompt} onChange={e => setFw({ systemPrompt: e.target.value })}
+                  rows={4} placeholder="z.B.: Erwähne immer unseren USP 'kein Jahresvertrag'. Frage nach dem aktuellen Anbieter des Leads…"
+                  className={`${inp} resize-none`} />
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button onClick={() => setStep(3)} className="flex-1 btn-secondary py-2.5 text-sm">← Zurück</button>
+              <button onClick={() => goToStep(5)} className="flex-1 btn-primary py-2.5 text-sm">Weiter → Flow Designer</button>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── STEP 5: Flow Designer ── */}
+      {step === 5 && (
         <div className="space-y-4">
           <div className="glass-card p-5">
             <div className="flex items-center justify-between mb-4">
@@ -436,7 +613,6 @@ export default function NewCampaignPage() {
               <span className="font-semibold">Strategie:</span> Opener (Pattern Interrupt) → Follow-up (Reciprocity + Social Proof) → Break-up (Loss Aversion). Condition-Nodes verzweigen den Flow je nach Intent des Leads.
             </div>
 
-            {/* Flow nodes */}
             <div className="space-y-3">
               {form.flow.map((s, i) => {
                 const meta = STEP_TYPE_META[s.type];
@@ -447,8 +623,7 @@ export default function NewCampaignPage() {
                 return (
                   <div key={s.id}>
                     <div className={`rounded-xl border transition-all ${isEditing ? `${meta.bg} ${meta.border}` : "bg-white border-slate-200"}`}>
-                      <div
-                        className="flex items-center gap-3 p-4 cursor-pointer"
+                      <div className="flex items-center gap-3 p-4 cursor-pointer"
                         onClick={() => setEditingStep(isEditing ? null : s.id)}>
                         <div className={`w-8 h-8 rounded-lg ${meta.bg} border ${meta.border} flex items-center justify-center shrink-0`}>
                           <span className={`text-sm ${meta.color}`}>{meta.icon}</span>
@@ -456,9 +631,7 @@ export default function NewCampaignPage() {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-sm font-semibold text-slate-800">{s.label}</span>
-                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${meta.bg} ${meta.border} ${meta.color}`}>
-                              {meta.label}
-                            </span>
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${meta.bg} ${meta.border} ${meta.color}`}>{meta.label}</span>
                             {s.delayDays > 0 && !isCondition && !isExit && (
                               <span className="text-[10px] text-slate-400">+{s.delayDays} Tage</span>
                             )}
@@ -469,11 +642,11 @@ export default function NewCampaignPage() {
                           <p className="text-[11px] text-slate-400 mt-0.5">{meta.desc}</p>
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
-                          <button onClick={e => { e.stopPropagation(); moveStep(s.id, -1); }}
+                          <button onClick={e => { e.stopPropagation(); moveFlowStep(s.id, -1); }}
                             disabled={i === 0} className="p-1 text-slate-300 hover:text-slate-600 disabled:opacity-30">↑</button>
-                          <button onClick={e => { e.stopPropagation(); moveStep(s.id, 1); }}
+                          <button onClick={e => { e.stopPropagation(); moveFlowStep(s.id, 1); }}
                             disabled={i === form.flow.length - 1} className="p-1 text-slate-300 hover:text-slate-600 disabled:opacity-30">↓</button>
-                          <button onClick={e => { e.stopPropagation(); removeStep(s.id); }}
+                          <button onClick={e => { e.stopPropagation(); removeFlowStep(s.id); }}
                             disabled={form.flow.length <= 1}
                             className="p-1 text-slate-300 hover:text-red-500 disabled:opacity-30 ml-1">✕</button>
                           <span className={`text-xs text-slate-400 ml-1 transition-transform ${isEditing ? "rotate-180" : ""}`}>▾</span>
@@ -482,7 +655,6 @@ export default function NewCampaignPage() {
 
                       {isEditing && (
                         <div className="px-4 pb-4 space-y-3 border-t border-slate-100 pt-3">
-                          {/* Label + Delay (non-condition/exit) */}
                           {!isExit && (
                             <div className="grid grid-cols-2 gap-3">
                               <div>
@@ -501,24 +673,17 @@ export default function NewCampaignPage() {
                               )}
                             </div>
                           )}
-
-                          {/* Message template — only for message nodes */}
                           {!isCondition && !isExit && (
                             <div>
                               <label className="text-xs text-slate-500 block mb-1">
                                 Nachricht-Template <span className="text-slate-300">(leer = KI generiert live)</span>
                               </label>
-                              <textarea
-                                value={s.messageTemplate}
+                              <textarea value={s.messageTemplate}
                                 onChange={e => updateFlowStep(s.id, { messageTemplate: e.target.value })}
                                 placeholder="Leer lassen für KI-generierte Nachrichten (empfohlen)"
-                                rows={3}
-                                className={`${inp} resize-none`}
-                              />
+                                rows={3} className={`${inp} resize-none`} />
                             </div>
                           )}
-
-                          {/* Condition branches */}
                           {isCondition && (
                             <div>
                               <div className="flex items-center justify-between mb-2">
@@ -529,8 +694,7 @@ export default function NewCampaignPage() {
                               <div className="space-y-2">
                                 {(s.branches ?? []).map((b, bi) => (
                                   <div key={bi} className="flex items-center gap-2">
-                                    <select
-                                      value={b.intent}
+                                    <select value={b.intent}
                                       onChange={e => updateBranch(s.id, bi, { intent: e.target.value as FlowBranch["intent"] })}
                                       className="flex-1 bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-700 focus:outline-none focus:border-violet-400">
                                       {INTENT_OPTIONS.map(opt => (
@@ -538,12 +702,9 @@ export default function NewCampaignPage() {
                                       ))}
                                     </select>
                                     <span className="text-slate-400 text-xs">→ Schritt</span>
-                                    <input
-                                      type="number" min={0} max={form.flow.length - 1}
-                                      value={b.nextStepIndex}
+                                    <input type="number" min={0} max={form.flow.length - 1} value={b.nextStepIndex}
                                       onChange={e => updateBranch(s.id, bi, { nextStepIndex: Number(e.target.value) })}
-                                      className="w-16 bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-700 focus:outline-none focus:border-violet-400"
-                                    />
+                                      className="w-16 bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-700 focus:outline-none focus:border-violet-400" />
                                     <button onClick={() => removeBranch(s.id, bi)}
                                       className="text-slate-300 hover:text-red-400 text-xs">✕</button>
                                   </div>
@@ -552,11 +713,9 @@ export default function NewCampaignPage() {
                                   <p className="text-xs text-slate-400 italic">Keine Branches — füge mindestens einen hinzu</p>
                                 )}
                               </div>
-                              <p className="text-[10px] text-slate-400 mt-2">Schritt-Index = Position im Flow (0 = erster Schritt). Default-Branch wird verwendet falls kein Intent übereinstimmt.</p>
+                              <p className="text-[10px] text-slate-400 mt-2">Schritt-Index = Position im Flow (0 = erster Schritt).</p>
                             </div>
                           )}
-
-                          {/* Step type switcher */}
                           <div>
                             <label className="text-xs text-slate-500 block mb-1">Schritt-Typ</label>
                             <div className="flex gap-1.5 flex-wrap">
@@ -576,7 +735,6 @@ export default function NewCampaignPage() {
                         </div>
                       )}
                     </div>
-
                     {i < form.flow.length - 1 && (
                       <div className="flex items-center justify-center py-1">
                         <div className="w-px h-4 bg-slate-200" />
@@ -587,12 +745,11 @@ export default function NewCampaignPage() {
               })}
             </div>
 
-            {/* Add step */}
             <div className="mt-4 pt-4 border-t border-slate-100">
               <p className="text-xs text-slate-400 mb-2">Schritt hinzufügen:</p>
               <div className="flex gap-2 flex-wrap">
                 {(Object.keys(STEP_TYPE_META) as StepType[]).map(t => (
-                  <button key={t} onClick={() => addStep(t)}
+                  <button key={t} onClick={() => addFlowStep(t)}
                     className={`px-3 py-2 rounded-xl text-xs font-medium border transition-all ${STEP_TYPE_META[t].bg} ${STEP_TYPE_META[t].border} ${STEP_TYPE_META[t].color} hover:opacity-80`}>
                     + {STEP_TYPE_META[t].label}
                   </button>
@@ -602,110 +759,23 @@ export default function NewCampaignPage() {
           </div>
 
           <div className="flex gap-3">
-            <button onClick={() => setStep(1)} className="flex-1 btn-secondary py-2.5 text-sm">← Zurück</button>
-            <button onClick={() => setStep(3)} className="flex-1 btn-primary py-2.5 text-sm">Weiter → Import</button>
+            <button onClick={() => setStep(4)} className="flex-1 btn-secondary py-2.5 text-sm">← Zurück</button>
+            <button onClick={() => goToStep(6)} className="flex-1 btn-primary py-2.5 text-sm">Weiter → Starten</button>
           </div>
         </div>
       )}
 
-      {/* ── Step 3: Import ── */}
-      {step === 3 && (
-        <div className="glass-card p-6 space-y-5">
-          <h2 className="text-base font-semibold text-slate-800">Kontakte importieren</h2>
-          <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-500">
-            <span className="font-medium text-slate-700">CSV-Format:</span>{" "}
-            <code className="bg-white border border-slate-200 rounded px-1.5 py-0.5">name, contact, channel, alt_contact, alt_channel</code>
-            <br />
-            <span className="mt-1 block">Spalten <code className="bg-white border border-slate-200 rounded px-1 py-0.5">channel</code>: email / sms / whatsapp. Wird automatisch aus E-Mail-Adresse erkannt falls leer.</span>
-          </div>
-          <div
-            onClick={() => fileRef.current?.click()}
-            onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f?.name.endsWith(".csv")) handleFile(f); }}
-            onDragOver={e => e.preventDefault()}
-            className={`border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all ${
-              form.file ? "border-emerald-300 bg-emerald-50" : "border-slate-200 hover:border-violet-300 hover:bg-violet-50"
-            }`}>
-            <input ref={fileRef} type="file" accept=".csv"
-              onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
-              className="hidden" />
-            {form.file ? (
-              <>
-                <div className="w-12 h-12 rounded-2xl bg-emerald-100 border border-emerald-200 flex items-center justify-center mx-auto mb-3">
-                  <span className="text-emerald-600 text-xl">✓</span>
-                </div>
-                <p className="text-slate-800 font-medium text-sm">{form.file.name}</p>
-                <p className="text-slate-400 text-xs mt-1">
-                  {(form.file.size / 1024).toFixed(0)} KB · {parsedContacts.length} Kontakte erkannt · Klicken zum Ersetzen
-                </p>
-              </>
-            ) : (
-              <>
-                <div className="w-12 h-12 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center mx-auto mb-3">
-                  <span className="text-slate-400 text-xl">↑</span>
-                </div>
-                <p className="text-slate-700 font-medium text-sm">CSV hochladen (optional)</p>
-                <p className="text-slate-400 text-xs mt-1">Klicken oder hierher ziehen</p>
-              </>
-            )}
-          </div>
-
-          {/* Contact preview table */}
-          {parsedContacts.length > 0 && (
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-xs font-semibold text-slate-700">{parsedContacts.length} Kontakte erkannt</p>
-                <button onClick={() => { setForm(f => ({ ...f, file: null })); setParsedContacts([]); }}
-                  className="text-xs text-red-400 hover:text-red-600">Verwerfen</button>
-              </div>
-              <div className="rounded-xl border border-slate-200 overflow-hidden">
-                <div className="grid grid-cols-[auto_1fr_auto_auto] text-[10px] font-semibold text-slate-500 uppercase tracking-wide bg-slate-50 px-3 py-2 gap-3">
-                  <span>#</span><span>Name</span><span>Kontakt</span><span>Kanal</span>
-                </div>
-                <div className="divide-y divide-slate-100 max-h-48 overflow-y-auto">
-                  {parsedContacts.slice(0, 50).map((c, i) => (
-                    <div key={i} className="grid grid-cols-[auto_1fr_auto_auto] text-xs px-3 py-2 gap-3 items-center hover:bg-slate-50">
-                      <span className="text-slate-400">{i + 1}</span>
-                      <span className="text-slate-800 font-medium truncate">{c.name}</span>
-                      <span className="text-slate-500 truncate max-w-[140px]">{c.contact}</span>
-                      <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
-                        c.channel === "email" ? "bg-violet-100 text-violet-700" :
-                        c.channel === "whatsapp" ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-700"
-                      }`}>{c.channel}</span>
-                    </div>
-                  ))}
-                  {parsedContacts.length > 50 && (
-                    <div className="px-3 py-2 text-xs text-slate-400 text-center">
-                      + {parsedContacts.length - 50} weitere Kontakte
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          <div className="flex gap-3">
-            <button onClick={() => setStep(2)} className="flex-1 btn-secondary py-2.5 text-sm">← Zurück</button>
-            <button onClick={() => setStep(4)} className="flex-1 btn-primary py-2.5 text-sm">Weiter → Starten</button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Step 4: Launch ── */}
-      {step === 4 && (
+      {/* ── STEP 6: Launch ── */}
+      {step === 6 && (
         <div className="glass-card p-6 space-y-5">
           <h2 className="text-base font-semibold text-slate-800">Kampagne starten</h2>
           <div className="bg-slate-50 border border-slate-200 rounded-xl divide-y divide-slate-100">
             {[
-              { label: "Kampagne",   value: form.name },
-              { label: "Agent",      value: `${form.agentName || "Tanja"} · ${form.agentTone || "—"} · ${form.leadType?.toUpperCase() || "—"}` },
-              { label: "Unternehmen",value: form.companyName || "—" },
-              { label: "Produkt",    value: form.offer || "—" },
-              { label: "CTA",        value: form.cta || "—" },
-              { label: "Booking",    value: form.bookingLink || "—" },
-              { label: "Kanäle",    value: form.channels.map(c => c.toUpperCase()).join(", ") },
-              { label: "Flow",      value: `${form.flow.length} Schritte (${form.flow.filter(s => s.type === "condition").length} Conditions)` },
-              { label: "Kontakte",  value: parsedContacts.length > 0 ? `${parsedContacts.length} importiert` : form.file?.name ?? "Kein Import" },
-              { label: "Agents",    value: null },
+              { label: "Kampagne",  value: form.name },
+              { label: "Kanäle",   value: form.channels.map(c => c.toUpperCase()).join(", ") },
+              { label: "Flow",     value: `${form.flow.length} Schritte (${form.flow.filter(s => s.type === "condition").length} Conditions)` },
+              { label: "Kontakte", value: contacts.length > 0 ? `${contacts.length} importiert` : "Kein Import" },
+              { label: "Agents",   value: null },
             ].map(row => (
               <div key={row.label} className="flex justify-between items-center px-4 py-3 text-sm">
                 <span className="text-slate-500">{row.label}</span>
@@ -723,12 +793,12 @@ export default function NewCampaignPage() {
             </p>
           </div>
           <div className="flex gap-3">
-            <button onClick={() => setStep(3)} disabled={launching} className="flex-1 btn-secondary py-2.5 text-sm disabled:opacity-40">← Zurück</button>
+            <button onClick={() => setStep(5)} disabled={launching} className="flex-1 btn-secondary py-2.5 text-sm disabled:opacity-40">← Zurück</button>
             <button onClick={handleLaunch} disabled={launching}
               className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all text-white ${
                 launching ? "bg-emerald-500" : "bg-emerald-600 hover:bg-emerald-500"
               }`}>
-              {launching ? "Wird gestartet…" : "Kampagne starten →"}
+              {launching ? "Wird erstellt…" : "Weiter → Simulation"}
             </button>
           </div>
         </div>

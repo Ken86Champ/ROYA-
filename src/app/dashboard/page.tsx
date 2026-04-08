@@ -97,7 +97,7 @@ export default function DashboardPage() {
       sub: `${stats?.conversations.humanNeeded ?? 0} eskaliert`,
       icon: "◊", accent: "from-indigo-500 to-violet-500",
       iconBg: "bg-indigo-50", iconColor: "text-indigo-600",
-      href: "/dashboard/conversations",
+      href: "/dashboard/campaigns",
     },
     {
       label: "Termine gebucht",
@@ -105,7 +105,7 @@ export default function DashboardPage() {
       sub: `${stats?.conversations.booked ?? 0} via Agent`,
       icon: "◇", accent: "from-emerald-500 to-green-500",
       iconBg: "bg-emerald-50", iconColor: "text-emerald-600",
-      href: "/dashboard/conversations",
+      href: "/dashboard/appointments",
     },
   ];
 
@@ -166,7 +166,7 @@ export default function DashboardPage() {
               <h2 className="text-base font-semibold text-slate-900">Letzte Aktivitäten</h2>
               <p className="text-xs text-slate-400 mt-0.5">Echtzeit · aktualisiert alle 8s</p>
             </div>
-            <Link href="/dashboard/conversations" className="text-xs text-violet-500 hover:text-violet-700 font-medium transition-colors">
+            <Link href="/dashboard/campaigns" className="text-xs text-violet-500 hover:text-violet-700 font-medium transition-colors">
               Alle ansehen →
             </Link>
           </div>
@@ -174,7 +174,7 @@ export default function DashboardPage() {
           {stats && stats.recentActivity.length > 0 ? (
             <div className="space-y-2">
               {stats.recentActivity.map(a => (
-                <Link key={a.id} href={`/dashboard/conversations`}
+                <Link key={a.id} href={`/dashboard/campaigns`}
                   className="flex items-center gap-3 p-3 rounded-xl hover:bg-slate-50 transition-colors group">
                   <div className="w-8 h-8 rounded-xl bg-violet-100 flex items-center justify-center font-bold text-violet-700 text-sm shrink-0">
                     {a.leadName.slice(0, 1).toUpperCase()}
@@ -238,10 +238,8 @@ export default function DashboardPage() {
         <div className="space-y-3">
           <h2 className="text-base font-semibold text-slate-900 mb-4">Schnellaktionen</h2>
           {[
-            { href: "/dashboard/sms-test",      icon: "▶", title: "Agent testen",       desc: "V2-Orchestrator live testen",               highlight: true },
-            { href: "/dashboard/campaigns/new", icon: "◎", title: "Neue Kampagne",      desc: "Leads hochladen → Kampagne starten" },
-            { href: "/dashboard/conversations", icon: "◊", title: "Gespräche",          desc: `${(stats?.conversations.replied ?? 0)} neue Antworten warten` },
-            { href: "/dashboard/clients",       icon: "◈", title: "Endkunden",          desc: "Kunden und deren Kampagnen verwalten" },
+            { href: "/dashboard/campaigns/new", icon: "◎", title: "Kampagne erstellen", desc: "CSV → Felder → Flow → Simulation → Start", highlight: true },
+            { href: "/dashboard/simulation",    icon: "▶", title: "Simulation",         desc: "Live-Simulation der KI-Agent Pipeline" },
           ].map(a => (
             <Link key={a.title} href={a.href}
               className={`p-4 flex items-center gap-4 group rounded-2xl border transition-all ${
