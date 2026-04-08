@@ -1,7 +1,7 @@
 "use client";
 import { useState, useRef, useEffect, use } from "react";
 import { useRouter } from "next/navigation";
-import type { Campaign, FlowStep, CampaignContact } from "@/lib/campaign-store";
+import type { Campaign, FlowStep, CampaignContact } from "@/lib/campaign-types";
 
 // ─── TYPES ────────────────────────────────────────────────────────────────────
 
@@ -240,8 +240,15 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
 
   useEffect(() => {
     fetch(`/api/campaigns/${id}`)
-      .then(r => r.json())
-      .then((c: Campaign) => { setCampaign(c); setLoading(false); })
+      .then(r => {
+        if (!r.ok) throw new Error(`Campaign nicht gefunden (${r.status})`);
+        return r.json();
+      })
+      .then((c: Campaign) => {
+        if (!c.id) throw new Error("Ungültige Kampagne");
+        setCampaign(c);
+        setLoading(false);
+      })
       .catch(() => setLoading(false));
   }, [id]);
 
@@ -268,15 +275,29 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
       // Use saved template if set, otherwise generate
       let text = opener?.messageTemplate || "";
       if (!text) {
+        const fw = campaign.aiFramework ?? {};
+        const bc = campaign.businessContext ?? {};
         const res = await fetch("/api/simulate/opener", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             leadName: contact.name,
-            agentName: "ROYA Agent",
-            companyName: campaign.name,
-            offer: campaign.name,
-            goal: "Reaktivierungsgespräch starten",
+            agentName: fw.agentName || "Lena",
+            companyName: bc.companyName || campaign.name,
+            offer: bc.offer || campaign.name,
+            goal: bc.cta || "Reaktivierungsgespräch starten",
+            valueProp: bc.valueProp || "",
+            painPoint: bc.painPoint || "",
+            cta: bc.cta || "",
+            specialOffer: bc.specialOffer || "",
+            leadRelationship: bc.leadRelationship || "",
+            urgency: bc.urgency || "",
+            insiderKnowledge: bc.insiderKnowledge || "",
+            doNotSay: bc.doNotSay || "",
+            tone: fw.tone || "Warm, direkt und menschlich",
+            language: fw.language || "de",
+            rules: fw.rules ?? [],
+            systemPrompt: fw.systemPrompt || "",
           }),
         });
         const data = await res.json();
@@ -311,12 +332,34 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
           message: text,
           history: newHistory,
           business: {
-            agentName: "ROYA Agent",
-            companyName: campaign.name,
-            offer: campaign.name,
-            goal: "Reaktivierungsgespräch starten",
-            tone: "Warm, direkt und menschlich",
-            language: "de",
+            agentName: campaign.aiFramework?.agentName || "Lena",
+            companyName: campaign.businessContext?.companyName || campaign.name,
+            offer: campaign.businessContext?.offer || campaign.name,
+            goal: campaign.businessContext?.cta || "Reaktivierungsgespräch starten",
+            tone: campaign.aiFramework?.tone || "Warm, direkt und menschlich",
+            language: campaign.aiFramework?.language || "de",
+            valueProp: campaign.businessContext?.valueProp || "",
+            painPoint: campaign.businessContext?.painPoint || "",
+            cta: campaign.businessContext?.cta || "",
+            bookingLink: campaign.businessContext?.bookingLink || "",
+            // Extended context
+            industry: campaign.businessContext?.industry || "",
+            companyDescription: campaign.businessContext?.companyDescription || "",
+            location: campaign.businessContext?.location || "",
+            usps: campaign.businessContext?.usps || "",
+            allServices: campaign.businessContext?.allServices || "",
+            priceRange: campaign.businessContext?.priceRange || "",
+            specialOffer: campaign.businessContext?.specialOffer || "",
+            leadRelationship: campaign.businessContext?.leadRelationship || "",
+            noConvertReason: campaign.businessContext?.noConvertReason || "",
+            afterCta: campaign.businessContext?.afterCta || "",
+            urgency: campaign.businessContext?.urgency || "",
+            objections: campaign.businessContext?.objections || [],
+            doNotSay: campaign.businessContext?.doNotSay || "",
+            insiderKnowledge: campaign.businessContext?.insiderKnowledge || "",
+            exampleConversation: campaign.businessContext?.exampleConversation || "",
+            rules: campaign.aiFramework?.rules ?? [],
+            systemPrompt: campaign.aiFramework?.systemPrompt || "",
           },
         }),
       });
@@ -400,8 +443,12 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
   );
 
   if (!campaign) return (
-    <div className="flex items-center justify-center h-full">
+    <div className="flex flex-col items-center justify-center h-full gap-4">
       <div className="text-slate-400 text-sm">Kampagne nicht gefunden.</div>
+      <button onClick={() => router.push("/dashboard/campaigns")}
+        className="px-4 py-2 bg-violet-600 text-white text-sm rounded-lg hover:bg-violet-500 transition-colors">
+        ← Zurück zu Kampagnen
+      </button>
     </div>
   );
 

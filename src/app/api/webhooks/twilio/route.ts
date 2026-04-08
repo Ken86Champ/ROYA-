@@ -5,13 +5,17 @@
  * Routes every message through the V2 Conversation Orchestrator.
  */
 
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { runConversationTurn } from '@/lib/conversation/orchestrator';
 import {
   validateTwilioSignature,
   extractTwilioParams,
 } from '@/lib/compliance/webhook-signature';
 import { DEFAULT_PERSONA } from '@/lib/types/conversation';
+
+// In-process dedup: ignore MessageSids we've already started processing
+// (protects against Twilio sending the same webhook twice within the same instance)
+const _processing = new Set<string>();
 
 const TWIML_EMPTY = "<?xml version='1.0' encoding='UTF-8'?><Response></Response>";
 const STOP_KEYWORDS = [
@@ -62,8 +66,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const formData = await req.formData();
     const params   = extractTwilioParams(formData);
 
-    const from    = params['From'] || '';
-    const msgBody = (params['Body'] || '').trim();
+    const from      = params['From'] || '';
+    const msgBody   = (params['Body'] || '').trim();
+    const messageSid = params['MessageSid'] || '';
     const channel: 'sms' | 'whatsapp' = from.startsWith('whatsapp:') ? 'whatsapp' : 'sms';
     const contact = from.replace('whatsapp:', '');
 
@@ -83,6 +88,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       }
     }
 
+    // ── Dedup: skip if already processing this MessageSid ────────────────
+    if (messageSid && _processing.has(messageSid)) {
+      console.log('[ROYA] Duplicate webhook ignored:', messageSid);
+      return ok();
+    }
+    if (messageSid) _processing.add(messageSid);
+
     // ── Opt-out check ─────────────────────────────────────────────────────
     const msgLower = msgBody.toLowerCase();
     if (STOP_KEYWORDS.some(kw => msgLower.includes(kw))) {
@@ -91,23 +103,32 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         'Du wurdest abgemeldet und erhältst keine weiteren Nachrichten.',
         channel,
       );
+      if (messageSid) _processing.delete(messageSid);
       return ok();
     }
 
-    // ── Run V2 Orchestrator ───────────────────────────────────────────────
-    const result = await runConversationTurn({
-      conversationId: `twilio_${contact}`,  // stable ID per contact
-      leadName:       contact,              // will be overridden if lead found in DB
-      channel,
-      incomingMessage: msgBody,
-      leadContact:     contact,
-      business:        DEFAULT_PERSONA,     // TODO: load from agency/client config
-    });
+    // ── Return 200 to Twilio immediately, process in background ──────────
+    // This prevents Twilio from retrying due to slow AI processing (3 LLM calls)
+    after(async () => {
+      try {
+        const result = await runConversationTurn({
+          conversationId:  `twilio_${contact}`,
+          leadName:        contact,
+          channel,
+          incomingMessage: msgBody,
+          leadContact:     contact,
+          business:        DEFAULT_PERSONA,
+        });
 
-    // ── Send reply ────────────────────────────────────────────────────────
-    if (result.action === 'reply' && result.reply) {
-      await sendTwilioMessage(contact, result.reply, channel);
-    }
+        if (result.action === 'reply' && result.reply) {
+          await sendTwilioMessage(contact, result.reply, channel);
+        }
+      } catch (err) {
+        console.error('[ROYA] Background orchestrator error:', err);
+      } finally {
+        if (messageSid) _processing.delete(messageSid);
+      }
+    });
 
     return ok();
   } catch (err) {

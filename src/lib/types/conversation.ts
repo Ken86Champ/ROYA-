@@ -167,6 +167,26 @@ export interface BusinessPersona {
   goal: string;
   tone: string;
   language: string;
+  valueProp?: string;
+  painPoint?: string;
+  cta?: string;
+  bookingLink?: string;
+  // Extended context
+  industry?: string;
+  companyDescription?: string;
+  location?: string;
+  usps?: string;
+  allServices?: string;
+  priceRange?: string;
+  specialOffer?: string;
+  leadRelationship?: string;
+  noConvertReason?: string;
+  afterCta?: string;
+  urgency?: string;
+  objections?: { objection: string; response: string }[];
+  doNotSay?: string;
+  insiderKnowledge?: string;
+  exampleConversation?: string;
 }
 
 export const DEFAULT_PERSONA: BusinessPersona = {

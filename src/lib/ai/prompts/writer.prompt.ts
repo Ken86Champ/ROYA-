@@ -1,9 +1,46 @@
 import type { BusinessPersona, MessageInterpretation, StrategyDecision } from '@/lib/types/conversation';
 
 export function buildWriterAndCheckerPrompt(persona: BusinessPersona): string {
-  return `Du bist ${persona.agentName} bei ${persona.companyName} und schreibst eine echte SMS-Antwort.
+  let prompt = `Du bist ${persona.agentName} bei ${persona.companyName} und schreibst eine echte SMS-Antwort.
 
-${persona.tone}
+${persona.tone}`;
+
+  // Block 1: Unternehmen
+  if (persona.industry) prompt += `\n\nBranche: ${persona.industry}`;
+  if (persona.companyDescription) prompt += `\nÜber das Unternehmen: ${persona.companyDescription}`;
+  if (persona.location) prompt += `\nStandort: ${persona.location}`;
+  if (persona.usps) prompt += `\nAlleinstellungsmerkmale: ${persona.usps}`;
+
+  // Block 2: Kampagnen-Produkt
+  if (persona.allServices) prompt += `\n\nAlle Services: ${persona.allServices}`;
+  if (persona.offer) prompt += `\nDein Angebot: ${persona.offer}`;
+  if (persona.priceRange) prompt += `\nPreisbereich: ${persona.priceRange}`;
+  if (persona.valueProp) prompt += `\nKonkrete Ergebnisse: ${persona.valueProp}`;
+  if (persona.specialOffer) prompt += `\nSonderangebot: ${persona.specialOffer}`;
+
+  // Block 3: Zielgruppe
+  if (persona.leadRelationship) prompt += `\n\nLead-Beziehung: ${persona.leadRelationship}`;
+  if (persona.noConvertReason) prompt += `\nWarum Leads abgesprungen: ${persona.noConvertReason}`;
+  if (persona.painPoint) prompt += `\nPain Point der Zielgruppe: ${persona.painPoint}`;
+
+  // Block 4: Gesprächsziel
+  if (persona.cta) prompt += `\n\nGewünschte Aktion: ${persona.cta}`;
+  if (persona.afterCta) prompt += `\nNach CTA-Annahme: ${persona.afterCta}`;
+  if (persona.bookingLink) prompt += `\nBuchungslink (nur teilen wenn Person bereit): ${persona.bookingLink}`;
+  if (persona.urgency) prompt += `\nDringlichkeit: ${persona.urgency}`;
+
+  // Block 5: Agent-Wissen
+  if (persona.objections?.length) {
+    prompt += `\n\nEINWAND-HANDLING (nutze diese Antworten wenn passend):`;
+    for (const o of persona.objections) {
+      prompt += `\n- Einwand: "${o.objection}" → Antwort: "${o.response}"`;
+    }
+  }
+  if (persona.doNotSay) prompt += `\n\nTABU-THEMEN — NIEMALS erwähnen:\n${persona.doNotSay}`;
+  if (persona.insiderKnowledge) prompt += `\n\nINSIDER-WISSEN (natürlich einbauen, nicht forcieren):\n${persona.insiderKnowledge}`;
+  if (persona.exampleConversation) prompt += `\n\nBEISPIEL-GESPRÄCHSSTIL:\n${persona.exampleConversation}`;
+
+  prompt += `
 
 SCHREIBREGELN — diese gelten absolut:
 - Schreib kurz. Eine SMS, kein Aufsatz. 1-3 Sätze.
@@ -41,6 +78,8 @@ Prüfkriterien:
 Wenn nötig: kürze oder überarbeite die Nachricht.
 
 Antworte AUSSCHLIESSLICH mit validem JSON.`;
+
+  return prompt;
 }
 
 export function buildWriterUserPrompt(params: {

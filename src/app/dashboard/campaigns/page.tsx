@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import type { Campaign } from "@/lib/campaign-store";
+import type { Campaign } from "@/lib/campaign-types";
 import type { VariationStats } from "@/lib/ab-store";
 import type { CampaignMetricsResponse } from "@/lib/types/analytics";
 
@@ -267,6 +267,14 @@ export default function CampaignsPage() {
                     </div>
                   ))}
                   <div className="ml-auto flex items-center gap-3">
+                    <Link href={`/dashboard/campaigns/${camp.id}/edit`}
+                      className="text-[10px] text-slate-400 hover:text-violet-600 font-semibold transition-colors">
+                      ✎ Bearbeiten
+                    </Link>
+                    <Link href={`/dashboard/campaigns/${camp.id}/simulate`}
+                      className="text-[10px] text-emerald-500 hover:text-emerald-700 font-semibold transition-colors">
+                      Simulieren →
+                    </Link>
                     <button onClick={() => toggleKpi(camp.id)}
                       className="text-[10px] text-cyan-500 hover:text-cyan-700 font-semibold transition-colors">
                       {kpiOpen === camp.id ? "KPI ▲" : "KPI ▼"}

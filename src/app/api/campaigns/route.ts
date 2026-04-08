@@ -15,6 +15,7 @@ export async function POST(req: NextRequest) {
     contacts: body.contacts,
     flow: body.flow,
     aiFramework: body.aiFramework,
+    businessContext: body.businessContext,
   });
   if (body.clientId) {
     await clientStore.linkCampaign(body.clientId, campaign.id);

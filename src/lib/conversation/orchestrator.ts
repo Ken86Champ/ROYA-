@@ -44,7 +44,7 @@ export interface TurnParams {
 
 export async function runConversationTurn(params: TurnParams): Promise<OrchestratorResult> {
   // ── Load context (Supabase or Twilio fallback) ────────────────────────────
-  const context = await getConversationContext({
+  let context = await getConversationContext({
     conversationId: params.conversationId,
     leadId:         params.leadId,
     leadName:       params.leadName,
@@ -52,6 +52,16 @@ export async function runConversationTurn(params: TurnParams): Promise<Orchestra
     contact:        params.leadContact,
     business:       params.business,
   });
+
+  // Reset terminal states on new inbound — allows conversations to restart
+  // (e.g. lead replies to a new campaign opener after previous conversation ended)
+  if (context.currentState === 'dead' || context.currentState === 'handoff_required') {
+    context = {
+      ...context,
+      currentState: 'new_unaware',
+      scores: { temperature: 20, friction: 30, bookingReadiness: 0, trust: 10, risk: 20 },
+    };
+  }
 
   // Persist inbound message
   persistMessage({

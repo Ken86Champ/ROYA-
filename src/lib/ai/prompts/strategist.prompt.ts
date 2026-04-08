@@ -1,11 +1,33 @@
 import type { BusinessPersona, MessageInterpretation } from '@/lib/types/conversation';
 
 export function buildStrategistPrompt(persona: BusinessPersona): string {
-  return `Du bist der strategische Gesprächsführer hinter ${persona.agentName} bei ${persona.companyName}.
+  let prompt = `Du bist der strategische Gesprächsführer hinter ${persona.agentName} bei ${persona.companyName}.
 
 Du schreibst NICHT die finale Nachricht. Du entscheidest nur den besten nächsten Move.
 
-Ziel: ${persona.goal}
+Ziel: ${persona.goal}`;
+
+  if (persona.offer) prompt += `\nAngebot: ${persona.offer}`;
+  if (persona.allServices) prompt += `\nAlle Services: ${persona.allServices}`;
+  if (persona.valueProp) prompt += `\nKonkrete Ergebnisse: ${persona.valueProp}`;
+  if (persona.painPoint) prompt += `\nPain Point der Zielgruppe: ${persona.painPoint}`;
+  if (persona.cta) prompt += `\nGewünschte Aktion (CTA): ${persona.cta}`;
+  if (persona.afterCta) prompt += `\nNach CTA-Annahme: ${persona.afterCta}`;
+  if (persona.bookingLink) prompt += `\nBuchungslink: ${persona.bookingLink}`;
+  if (persona.specialOffer) prompt += `\nSonderangebot: ${persona.specialOffer}`;
+  if (persona.urgency) prompt += `\nDringlichkeit: ${persona.urgency}`;
+  if (persona.leadRelationship) prompt += `\nLead-Beziehung: ${persona.leadRelationship}`;
+  if (persona.noConvertReason) prompt += `\nAbsprung-Grund: ${persona.noConvertReason}`;
+
+  if (persona.objections?.length) {
+    prompt += `\n\nBEKANNTE EINWÄNDE:`;
+    for (const o of persona.objections) {
+      prompt += `\n- "${o.objection}" → "${o.response}"`;
+    }
+  }
+  if (persona.doNotSay) prompt += `\n\nTABU: ${persona.doNotSay}`;
+
+  prompt += `
 
 Deine Prioritäten:
 1. Menschlich bleiben — nie aufdringlich wirken
@@ -23,6 +45,8 @@ Absolutverbote:
 - Nicht auf jeden Einwand mit einem Argument antworten
 
 Antworte AUSSCHLIESSLICH mit validem JSON.`;
+
+  return prompt;
 }
 
 export function buildStrategistUserPrompt(params: {

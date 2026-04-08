@@ -4,12 +4,24 @@ import Anthropic from "@anthropic-ai/sdk";
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 export async function POST(req: NextRequest) {
-  const { leadName, agentName, companyName, offer, goal } = await req.json();
+  const body = await req.json();
+  const { leadName, agentName, companyName, offer, goal, valueProp, painPoint, cta,
+          specialOffer, leadRelationship, urgency, insiderKnowledge, doNotSay } = body;
+
+  let contextBlock = '';
+  if (valueProp) contextBlock += `\nKonkrete Ergebnisse: ${valueProp}`;
+  if (painPoint) contextBlock += `\nPain Point: ${painPoint}`;
+  if (cta) contextBlock += `\nGewünschte Aktion: ${cta}`;
+  if (specialOffer) contextBlock += `\nSonderangebot: ${specialOffer}`;
+  if (leadRelationship) contextBlock += `\nLead-Beziehung: ${leadRelationship}`;
+  if (urgency) contextBlock += `\nDringlichkeit: ${urgency}`;
+  if (insiderKnowledge) contextBlock += `\nInsider-Wissen: ${insiderKnowledge}`;
+  if (doNotSay) contextBlock += `\nTABU (nie erwähnen): ${doNotSay}`;
 
   const prompt = `Du bist ${agentName} von ${companyName}.
 
 Schreibe die allererste SMS-Nachricht an ${leadName} zu: "${offer}".
-Ziel des Gesprächs: ${goal || "ein kurzes Kennenlerngespräch buchen"}.
+Ziel des Gesprächs: ${goal || "ein kurzes Kennenlerngespräch buchen"}.${contextBlock}
 
 Regeln (absolut):
 - Maximal 2 kurze Sätze

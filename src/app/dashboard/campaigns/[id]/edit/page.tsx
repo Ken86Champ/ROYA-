@@ -1,7 +1,7 @@
 "use client";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, use } from "react";
 import { useRouter } from "next/navigation";
-import type { FlowStep, StepType, FlowBranch, AIFramework, AIModelId, BusinessContext } from "@/lib/campaign-types";
+import type { Campaign, FlowStep, StepType, FlowBranch, AIFramework, AIModelId, CampaignContact, BusinessContext } from "@/lib/campaign-types";
 import { AI_MODELS, DEFAULT_AI_FRAMEWORK, DEFAULT_BUSINESS_CONTEXT } from "@/lib/campaign-types";
 import type { Client } from "@/lib/client-store";
 
@@ -82,27 +82,18 @@ const STANDARD_FIELDS = [
 
 function genId() { return `step_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`; }
 
-function defaultFlow(): FlowStep[] {
-  return [
-    { id: genId(), type: "opener",   label: "Opener",      delayDays: 0,  condition: "no_reply", messageTemplate: "" },
-    { id: genId(), type: "followup", label: "Follow-up 1", delayDays: 3,  condition: "no_reply", messageTemplate: "" },
-    { id: genId(), type: "followup", label: "Follow-up 2", delayDays: 7,  condition: "no_reply", messageTemplate: "" },
-    { id: genId(), type: "breakup",  label: "Break-up",    delayDays: 14, condition: "no_reply", messageTemplate: "" },
-  ];
-}
-
 // ─── STEP BAR ─────────────────────────────────────────────────────────────────
 
 type WizardStep = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
 const WIZARD_STEPS = [
-  { n: 1, label: "Upload" },
+  { n: 1, label: "Kontakte" },
   { n: 2, label: "Felder" },
   { n: 3, label: "Unternehmen" },
   { n: 4, label: "Einrichten" },
   { n: 5, label: "KI-Setup" },
   { n: 6, label: "Flow" },
-  { n: 7, label: "Starten" },
+  { n: 7, label: "Speichern" },
 ];
 
 function StepBar({ current, maxReached, onNavigate }: {
@@ -110,7 +101,6 @@ function StepBar({ current, maxReached, onNavigate }: {
   maxReached: WizardStep;
   onNavigate: (s: WizardStep) => void;
 }) {
-  // Show condensed bar for 6 steps
   return (
     <div className="flex items-center gap-0 mb-8">
       {WIZARD_STEPS.map((s, i) => {
@@ -142,17 +132,23 @@ function StepBar({ current, maxReached, onNavigate }: {
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 
-export default function NewCampaignPage() {
+export default function EditCampaignPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
-  const [step, setStep] = useState<WizardStep>(1);
-  const [maxStep, setMaxStep] = useState<WizardStep>(1);
+  const [step, setStep] = useState<WizardStep>(3);
+  const [maxStep, setMaxStep] = useState<WizardStep>(7);
   const [dragging, setDragging] = useState(false);
-  const [launching, setLaunching] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [editingStep, setEditingStep] = useState<string | null>(null);
   const [clients, setClients] = useState<Client[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  // Step 1 — Upload
+  // Existing contacts from DB
+  const [existingContacts, setExistingContacts] = useState<CampaignContact[]>([]);
+  const [replaceMode, setReplaceMode] = useState(false);
+
+  // Step 1 — Upload (only when replacing)
   const [file, setFile] = useState<File | null>(null);
   const [parsed, setParsed] = useState<ReturnType<typeof parseCSV>>(null);
   const [parseError, setParseError] = useState("");
@@ -165,16 +161,37 @@ export default function NewCampaignPage() {
     name: "",
     clientId: "",
     channels: [] as string[],
-    flow: defaultFlow(),
+    flow: [] as FlowStep[],
     aiFramework: { ...DEFAULT_AI_FRAMEWORK } as AIFramework,
     businessContext: { ...DEFAULT_BUSINESS_CONTEXT } as BusinessContext,
   });
   const [autoFilling, setAutoFilling] = useState(false);
   const [openBlocks, setOpenBlocks] = useState<Record<string, boolean>>({ b1: true, b2: true, b3: false, b4: false, b5: false });
 
+  // Load campaign + clients
   useEffect(() => {
-    fetch("/api/clients").then(r => r.json()).then(setClients).catch(() => {});
-  }, []);
+    Promise.all([
+      fetch(`/api/campaigns/${id}`).then(r => {
+        if (!r.ok) throw new Error("Not found");
+        return r.json();
+      }),
+      fetch("/api/clients").then(r => r.json()).catch(() => []),
+    ]).then(([camp, cls]: [Campaign, Client[]]) => {
+      setForm({
+        name: camp.name,
+        clientId: camp.clientId ?? "",
+        channels: camp.channels ?? [],
+        flow: camp.flow?.length ? camp.flow : [],
+        aiFramework: { ...DEFAULT_AI_FRAMEWORK, ...camp.aiFramework, escalation: { ...DEFAULT_AI_FRAMEWORK.escalation, ...(camp.aiFramework?.escalation ?? {}) }, rules: camp.aiFramework?.rules?.length ? camp.aiFramework.rules : DEFAULT_AI_FRAMEWORK.rules },
+        businessContext: { ...DEFAULT_BUSINESS_CONTEXT, ...(camp.businessContext ?? {}) },
+      });
+      setExistingContacts(camp.contacts ?? []);
+      setClients(cls);
+      setLoading(false);
+    }).catch(() => {
+      setLoading(false);
+    });
+  }, [id]);
 
   const goToStep = (s: WizardStep) => {
     setStep(s);
@@ -197,7 +214,7 @@ export default function NewCampaignPage() {
     reader.readAsText(f, "UTF-8");
   };
 
-  // Build contacts from mappings
+  // Build contacts from CSV mappings
   const buildContacts = () => {
     if (!parsed) return [];
     return parsed.rows.map(row => {
@@ -215,8 +232,8 @@ export default function NewCampaignPage() {
   };
 
   // Flow step helpers
-  const updateFlowStep = (id: string, patch: Partial<FlowStep>) =>
-    setForm(f => ({ ...f, flow: f.flow.map(s => s.id === id ? { ...s, ...patch } : s) }));
+  const updateFlowStep = (sid: string, patch: Partial<FlowStep>) =>
+    setForm(f => ({ ...f, flow: f.flow.map(s => s.id === sid ? { ...s, ...patch } : s) }));
 
   const addBranch = (stepId: string) =>
     setForm(f => ({ ...f, flow: f.flow.map(s => s.id !== stepId ? s : {
@@ -245,44 +262,51 @@ export default function NewCampaignPage() {
     setEditingStep(newStep.id);
   };
 
-  const removeFlowStep = (id: string) =>
-    setForm(f => ({ ...f, flow: f.flow.filter(s => s.id !== id) }));
+  const removeFlowStep = (sid: string) =>
+    setForm(f => ({ ...f, flow: f.flow.filter(s => s.id !== sid) }));
 
-  const moveFlowStep = (id: string, dir: -1 | 1) => {
+  const moveFlowStep = (sid: string, dir: -1 | 1) => {
     setForm(f => {
       const arr = [...f.flow];
-      const i = arr.findIndex(s => s.id === id);
+      const i = arr.findIndex(s => s.id === sid);
       if (i < 0 || i + dir < 0 || i + dir >= arr.length) return f;
       [arr[i], arr[i + dir]] = [arr[i + dir], arr[i]];
       return { ...f, flow: arr };
     });
   };
 
-  const handleLaunch = async () => {
-    setLaunching(true);
-    const contacts = buildContacts();
+  const handleSave = async () => {
+    setSaving(true);
     try {
-      const res = await fetch("/api/campaigns", {
-        method: "POST",
+      const csvContacts = replaceMode ? buildContacts() : null;
+      await fetch(`/api/campaigns/${id}`, {
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          action: "update_all",
           name: form.name,
-          clientId: form.clientId || undefined,
+          clientId: form.clientId || null,
           channels: form.channels,
           flow: form.flow,
           aiFramework: form.aiFramework,
           businessContext: form.businessContext,
-          contacts,
+          ...(csvContacts ? { contacts: csvContacts } : {}),
         }),
       });
-      const camp = await res.json();
-      router.push(`/dashboard/campaigns/${camp.id}/simulate`);
+      router.push(`/dashboard/campaigns/${id}/simulate`);
     } catch {
-      setLaunching(false);
+      setSaving(false);
     }
   };
 
-  const contacts = buildContacts();
+  const csvContacts = replaceMode ? buildContacts() : [];
+  const totalContacts = replaceMode ? csvContacts.length : existingContacts.length;
+
+  if (loading) return (
+    <div className="flex items-center justify-center h-full">
+      <div className="text-slate-400 text-sm">Kampagne wird geladen…</div>
+    </div>
+  );
 
   return (
     <div className="p-8 max-w-3xl overflow-auto h-full">
@@ -291,59 +315,111 @@ export default function NewCampaignPage() {
           className="text-sm text-slate-400 hover:text-slate-700 transition-colors flex items-center gap-1 mb-4">
           ← Zurück zu Kampagnen
         </button>
-        <h1 className="text-2xl font-bold text-slate-900">Kampagnen-Engine</h1>
-        <p className="text-slate-400 text-sm mt-1">In 7 Schritten von der CSV zur vollständigen Kampagne</p>
+        <h1 className="text-2xl font-bold text-slate-900">Kampagne bearbeiten</h1>
+        <p className="text-slate-400 text-sm mt-1">Alle Felder anpassen und direkt zur Simulation</p>
       </div>
 
       <StepBar current={step} maxReached={maxStep} onNavigate={goToStep} />
 
-      {/* ── STEP 1: Upload ── */}
+      {/* ── STEP 1: Contacts ── */}
       {step === 1 && (
         <div className="glass-card p-8">
-          <h2 className="text-lg font-semibold text-slate-900 mb-1">Kontaktliste hochladen</h2>
-          <p className="text-slate-400 text-sm mb-6">CSV-Datei mit Kontakten — die Engine erkennt die Felder automatisch.</p>
-          <div
-            onDragOver={e => { e.preventDefault(); setDragging(true); }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={e => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
-            onClick={() => fileRef.current?.click()}
-            className={`border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer transition-all ${
-              dragging ? "border-violet-400 bg-violet-50" :
-              file      ? "border-emerald-300 bg-emerald-50" :
-              "border-slate-200 hover:border-violet-300 hover:bg-slate-50"
-            }`}>
-            <input ref={fileRef} type="file" accept=".csv,.txt" className="hidden"
-              onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
-            {file ? (
-              <>
-                <div className="w-16 h-16 rounded-2xl bg-emerald-100 border border-emerald-200 flex items-center justify-center mx-auto mb-4">
-                  <span className="text-3xl text-emerald-500">✓</span>
-                </div>
-                <p className="text-emerald-700 font-semibold text-lg">{file.name}</p>
-                <p className="text-emerald-600 text-sm mt-1">{parsed?.rows.length ?? 0} Kontakte · {parsed?.headers.length ?? 0} Spalten · Klicken zum Ersetzen</p>
-              </>
-            ) : (
-              <>
-                <div className="w-16 h-16 rounded-2xl bg-violet-50 border border-violet-100 flex items-center justify-center mx-auto mb-4">
-                  <span className="text-3xl text-violet-300">↑</span>
-                </div>
-                <p className="text-slate-600 font-semibold">CSV hier hineinziehen oder klicken</p>
-                <p className="text-slate-400 text-sm mt-1">.csv, .txt · Unbegrenzte Kontakte</p>
-              </>
+          <h2 className="text-lg font-semibold text-slate-900 mb-1">Kontaktliste</h2>
+          <p className="text-slate-400 text-sm mb-6">Aktuelle Kontakte beibehalten oder neue CSV hochladen.</p>
+
+          {/* Existing contacts info */}
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 mb-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold text-slate-800">{existingContacts.length} bestehende Kontakte</p>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  {existingContacts.filter(c => c.channel === "sms").length} SMS ·{" "}
+                  {existingContacts.filter(c => c.channel === "email").length} E-Mail ·{" "}
+                  {existingContacts.filter(c => c.channel === "whatsapp").length} WhatsApp
+                </p>
+              </div>
+              <span className="text-2xl">📋</span>
+            </div>
+            {existingContacts.length > 0 && (
+              <div className="mt-3 max-h-40 overflow-y-auto rounded-lg border border-slate-200 bg-white">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-100 bg-slate-50">
+                      <th className="px-3 py-1.5 text-left text-slate-500 font-semibold">Name</th>
+                      <th className="px-3 py-1.5 text-left text-slate-500 font-semibold">Kontakt</th>
+                      <th className="px-3 py-1.5 text-left text-slate-500 font-semibold">Kanal</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {existingContacts.slice(0, 10).map(c => (
+                      <tr key={c.id} className="border-b border-slate-50 last:border-0">
+                        <td className="px-3 py-1.5 text-slate-700">{c.name}</td>
+                        <td className="px-3 py-1.5 text-slate-500 font-mono">{c.contact}</td>
+                        <td className="px-3 py-1.5 text-slate-400">{c.channel}</td>
+                      </tr>
+                    ))}
+                    {existingContacts.length > 10 && (
+                      <tr><td colSpan={3} className="px-3 py-1.5 text-slate-400 text-center">… und {existingContacts.length - 10} weitere</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
-          {parseError && <p className="text-red-500 text-sm mt-3">{parseError}</p>}
-          <div className="mt-5 p-4 rounded-xl bg-slate-50 border border-slate-200">
-            <p className="text-xs font-semibold text-slate-500 mb-1.5">Beispiel-Format:</p>
-            <code className="text-xs text-slate-600 font-mono">
-              Vorname,Nachname,E-Mail,Unternehmen,Kanal<br/>
-              Anna,Müller,a.mueller@firma.ch,Firma AG,email
-            </code>
-          </div>
-          <div className="flex justify-end mt-6">
-            <button disabled={!parsed} onClick={() => goToStep(2)}
-              className="px-6 py-2.5 bg-violet-600 text-white font-semibold rounded-xl disabled:opacity-40 hover:bg-violet-700 transition-all">
-              Weiter → Felder zuordnen
+
+          {/* Replace toggle */}
+          <button
+            onClick={() => { setReplaceMode(!replaceMode); if (replaceMode) { setFile(null); setParsed(null); setMappings([]); } }}
+            className={`w-full py-3 rounded-xl border text-sm font-medium transition-all mb-4 ${
+              replaceMode
+                ? "bg-amber-50 border-amber-300 text-amber-700"
+                : "bg-white border-slate-200 text-slate-500 hover:border-violet-300"
+            }`}>
+            {replaceMode ? "✕ Abbrechen — bestehende Kontakte behalten" : "↻ Neue CSV hochladen (ersetzt alle Kontakte)"}
+          </button>
+
+          {/* CSV upload area (only when replacing) */}
+          {replaceMode && (
+            <>
+              <div
+                onDragOver={e => { e.preventDefault(); setDragging(true); }}
+                onDragLeave={() => setDragging(false)}
+                onDrop={e => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
+                onClick={() => fileRef.current?.click()}
+                className={`border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer transition-all ${
+                  dragging ? "border-violet-400 bg-violet-50" :
+                  file      ? "border-emerald-300 bg-emerald-50" :
+                  "border-slate-200 hover:border-violet-300 hover:bg-slate-50"
+                }`}>
+                <input ref={fileRef} type="file" accept=".csv,.txt" className="hidden"
+                  onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
+                {file ? (
+                  <>
+                    <div className="w-16 h-16 rounded-2xl bg-emerald-100 border border-emerald-200 flex items-center justify-center mx-auto mb-4">
+                      <span className="text-3xl text-emerald-500">✓</span>
+                    </div>
+                    <p className="text-emerald-700 font-semibold text-lg">{file.name}</p>
+                    <p className="text-emerald-600 text-sm mt-1">{parsed?.rows.length ?? 0} Kontakte · {parsed?.headers.length ?? 0} Spalten</p>
+                  </>
+                ) : (
+                  <>
+                    <div className="w-16 h-16 rounded-2xl bg-violet-50 border border-violet-100 flex items-center justify-center mx-auto mb-4">
+                      <span className="text-3xl text-violet-300">↑</span>
+                    </div>
+                    <p className="text-slate-600 font-semibold">CSV hier hineinziehen oder klicken</p>
+                    <p className="text-slate-400 text-sm mt-1">.csv, .txt · Unbegrenzte Kontakte</p>
+                  </>
+                )}
+              </div>
+              {parseError && <p className="text-red-500 text-sm mt-3">{parseError}</p>}
+            </>
+          )}
+
+          <div className="flex justify-between mt-6">
+            <div />
+            <button onClick={() => goToStep(replaceMode && parsed ? 2 : 3)}
+              className="px-6 py-2.5 bg-violet-600 text-white font-semibold rounded-xl hover:bg-violet-700 transition-all">
+              {replaceMode && parsed ? "Weiter → Felder zuordnen" : "Weiter → Unternehmen"}
             </button>
           </div>
         </div>
@@ -675,7 +751,6 @@ export default function NewCampaignPage() {
               </div>
               {openBlocks.b5 && (
                 <div className="p-5 space-y-4">
-                  {/* Objections */}
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <label className="text-xs text-slate-500">Typische Einwände & Antworten</label>
@@ -714,7 +789,6 @@ export default function NewCampaignPage() {
                       <p className="text-xs text-slate-300 italic">Noch keine Einwände definiert. Klicke + Einwand.</p>
                     )}
                   </div>
-
                   <div>
                     <label className="text-xs text-slate-500 block mb-1.5">Tabu-Themen / Nicht erwähnen</label>
                     <textarea value={bc.doNotSay}
@@ -742,7 +816,7 @@ export default function NewCampaignPage() {
 
             {/* Navigation */}
             <div className="flex gap-3 pt-2">
-              <button onClick={() => setStep(2)} className="flex-1 btn-secondary py-2.5 text-sm">← Zurück</button>
+              <button onClick={() => setStep(1)} className="flex-1 btn-secondary py-2.5 text-sm">← Kontakte</button>
               <button onClick={() => goToStep(4)} disabled={!bc.companyName || !bc.offer}
                 className="flex-1 btn-primary py-3 text-sm disabled:opacity-40 disabled:cursor-not-allowed">
                 Weiter → Einrichten
@@ -788,7 +862,7 @@ export default function NewCampaignPage() {
             </div>
           </div>
           <div className="flex gap-3 pt-2">
-            <button onClick={() => setStep(3)} className="flex-1 btn-secondary py-2.5 text-sm">← Zurück</button>
+            <button onClick={() => setStep(3)} className="flex-1 btn-secondary py-2.5 text-sm">← Unternehmen</button>
             <button onClick={() => goToStep(5)} disabled={!form.name || form.channels.length === 0}
               className="flex-1 btn-primary py-3 text-sm disabled:opacity-40 disabled:cursor-not-allowed">
               Weiter → KI-Setup
@@ -1100,15 +1174,15 @@ export default function NewCampaignPage() {
 
           <div className="flex gap-3">
             <button onClick={() => setStep(5)} className="flex-1 btn-secondary py-2.5 text-sm">← Zurück</button>
-            <button onClick={() => goToStep(7)} className="flex-1 btn-primary py-2.5 text-sm">Weiter → Starten</button>
+            <button onClick={() => goToStep(7)} className="flex-1 btn-primary py-2.5 text-sm">Weiter → Speichern</button>
           </div>
         </div>
       )}
 
-      {/* ── STEP 7: Launch ── */}
+      {/* ── STEP 7: Save ── */}
       {step === 7 && (
         <div className="glass-card p-6 space-y-5">
-          <h2 className="text-base font-semibold text-slate-800">Kampagne starten</h2>
+          <h2 className="text-base font-semibold text-slate-800">Änderungen speichern</h2>
           <div className="bg-slate-50 border border-slate-200 rounded-xl divide-y divide-slate-100">
             {[
               { label: "Kampagne",     value: form.name },
@@ -1116,31 +1190,30 @@ export default function NewCampaignPage() {
               { label: "Angebot",      value: form.businessContext.offer ? (form.businessContext.offer.length > 60 ? form.businessContext.offer.slice(0, 60) + "…" : form.businessContext.offer) : "—" },
               { label: "Kanäle",       value: form.channels.map(c => c.toUpperCase()).join(", ") },
               { label: "Flow",         value: `${form.flow.length} Schritte (${form.flow.filter(s => s.type === "condition").length} Conditions)` },
-              { label: "Kontakte",     value: contacts.length > 0 ? `${contacts.length} importiert` : "Kein Import" },
+              { label: "Kontakte",     value: replaceMode ? `${csvContacts.length} neue (ersetzt bestehende)` : `${existingContacts.length} bestehend (unverändert)` },
               { label: "Agents",       value: null },
             ].map(row => (
               <div key={row.label} className="flex justify-between items-center px-4 py-3 text-sm">
                 <span className="text-slate-500">{row.label}</span>
                 {row.value !== null
                   ? <span className="text-slate-800 font-medium">{row.value}</span>
-                  : <span className="text-emerald-600 font-medium flex items-center gap-1.5"><span className="status-dot-green" />7 bereit</span>
+                  : <span className="text-emerald-600 font-medium flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />7 bereit</span>
                 }
               </div>
             ))}
           </div>
           <div className="bg-violet-50 border border-violet-100 rounded-xl p-4">
             <p className="text-violet-600 text-xs leading-relaxed">
-              Die 7 KI-Agents starten sofort: Intent Classifier wartet auf Antworten → automatische Replies → Condition-Nodes verzweigen den Flow → Termin-Buchung. Alle Gespräche live unter{" "}
-              <span className="font-semibold">Gespräche</span>.
+              Nach dem Speichern wirst du direkt zur <span className="font-semibold">Simulation</span> weitergeleitet, wo du die Kampagne mit deinen Leads testen kannst.
             </p>
           </div>
           <div className="flex gap-3">
-            <button onClick={() => setStep(6)} disabled={launching} className="flex-1 btn-secondary py-2.5 text-sm disabled:opacity-40">← Zurück</button>
-            <button onClick={handleLaunch} disabled={launching}
+            <button onClick={() => setStep(6)} disabled={saving} className="flex-1 btn-secondary py-2.5 text-sm disabled:opacity-40">← Zurück</button>
+            <button onClick={handleSave} disabled={saving}
               className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all text-white ${
-                launching ? "bg-emerald-500" : "bg-emerald-600 hover:bg-emerald-500"
+                saving ? "bg-violet-500" : "bg-violet-600 hover:bg-violet-500"
               }`}>
-              {launching ? "Wird erstellt…" : "Weiter → Simulation"}
+              {saving ? "Wird gespeichert…" : "Speichern → Simulation"}
             </button>
           </div>
         </div>
