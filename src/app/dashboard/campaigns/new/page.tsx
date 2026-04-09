@@ -161,16 +161,40 @@ export default function NewCampaignPage() {
   const [mappings, setMappings] = useState<{ csvColumn: string; standardField: string }[]>([]);
 
   // Steps 3–6 — Campaign form
-  const [form, setForm] = useState({
-    name: "",
-    clientId: "",
-    channels: [] as string[],
-    flow: defaultFlow(),
-    aiFramework: { ...DEFAULT_AI_FRAMEWORK } as AIFramework,
-    businessContext: { ...DEFAULT_BUSINESS_CONTEXT } as BusinessContext,
+  type WizardForm = { name: string; clientId: string; channels: string[]; flow: FlowStep[]; aiFramework: AIFramework; businessContext: BusinessContext };
+  const [form, setForm] = useState<WizardForm>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('roya_new_campaign');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          return {
+            name: parsed.name || "",
+            clientId: parsed.clientId || "",
+            channels: parsed.channels || [],
+            flow: parsed.flow?.length ? parsed.flow : defaultFlow(),
+            aiFramework: { ...DEFAULT_AI_FRAMEWORK, ...(parsed.aiFramework ?? {}), escalation: { ...DEFAULT_AI_FRAMEWORK.escalation, ...(parsed.aiFramework?.escalation ?? {}) } } as AIFramework,
+            businessContext: { ...DEFAULT_BUSINESS_CONTEXT, ...(parsed.businessContext ?? {}) } as BusinessContext,
+          };
+        }
+      } catch { /* ignore */ }
+    }
+    return {
+      name: "",
+      clientId: "",
+      channels: [] as string[],
+      flow: defaultFlow(),
+      aiFramework: { ...DEFAULT_AI_FRAMEWORK } as AIFramework,
+      businessContext: { ...DEFAULT_BUSINESS_CONTEXT } as BusinessContext,
+    };
   });
   const [autoFilling, setAutoFilling] = useState(false);
   const [openBlocks, setOpenBlocks] = useState<Record<string, boolean>>({ b1: true, b2: true, b3: false, b4: false, b5: false });
+
+  // Auto-save form to localStorage
+  useEffect(() => {
+    try { localStorage.setItem('roya_new_campaign', JSON.stringify(form)); } catch { /* ignore */ }
+  }, [form]);
 
   useEffect(() => {
     fetch("/api/clients").then(r => r.json()).then(setClients).catch(() => {});
@@ -182,7 +206,7 @@ export default function NewCampaignPage() {
   };
 
   const toggleChannel = (ch: string) =>
-    setForm(f => ({ ...f, channels: f.channels.includes(ch) ? f.channels.filter(c => c !== ch) : [...f.channels, ch] }));
+    setForm(f => ({ ...f, channels: f.channels.includes(ch) ? f.channels.filter((c: string) => c !== ch) : [...f.channels, ch] }));
 
   const handleFile = (f: File) => {
     setParseError("");
@@ -276,6 +300,7 @@ export default function NewCampaignPage() {
         }),
       });
       const camp = await res.json();
+      try { localStorage.removeItem('roya_new_campaign'); } catch { /* ignore */ }
       router.push(`/dashboard/campaigns/${camp.id}/simulate`);
     } catch {
       setLaunching(false);
@@ -424,7 +449,7 @@ export default function NewCampaignPage() {
           setForm(f => ({ ...f, businessContext: { ...f.businessContext, ...patch } }));
 
         const handleAutoFill = async () => {
-          if (!bc.companyName || !bc.offer) return;
+          if (!bc.companyName) return;
           setAutoFilling(true);
           try {
             const res = await fetch("/api/campaigns/autofill", {
@@ -439,6 +464,7 @@ export default function NewCampaignPage() {
             });
             const data = await res.json();
             setBc({
+              offer: data.offer || bc.offer,
               industry: data.industry || bc.industry,
               companyDescription: data.companyDescription || bc.companyDescription,
               usps: data.usps || bc.usps,
@@ -526,7 +552,7 @@ export default function NewCampaignPage() {
 
             {/* KI-Autofill */}
             <button onClick={handleAutoFill}
-              disabled={!bc.companyName || !bc.offer || autoFilling}
+              disabled={!bc.companyName || autoFilling}
               className="w-full py-2.5 rounded-xl border border-violet-200 bg-violet-50 text-violet-700 text-sm font-medium hover:bg-violet-100 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
               {autoFilling ? (
                 <><span className="animate-spin">⟳</span> KI füllt aus…</>

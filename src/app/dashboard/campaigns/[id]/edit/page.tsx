@@ -500,7 +500,7 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
           setForm(f => ({ ...f, businessContext: { ...f.businessContext, ...patch } }));
 
         const handleAutoFill = async () => {
-          if (!bc.companyName || !bc.offer) return;
+          if (!bc.companyName) return;
           setAutoFilling(true);
           try {
             const res = await fetch("/api/campaigns/autofill", {
@@ -515,6 +515,7 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
             });
             const data = await res.json();
             setBc({
+              offer: data.offer || bc.offer,
               industry: data.industry || bc.industry,
               companyDescription: data.companyDescription || bc.companyDescription,
               usps: data.usps || bc.usps,
@@ -602,7 +603,7 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
 
             {/* KI-Autofill */}
             <button onClick={handleAutoFill}
-              disabled={!bc.companyName || !bc.offer || autoFilling}
+              disabled={!bc.companyName || autoFilling}
               className="w-full py-2.5 rounded-xl border border-violet-200 bg-violet-50 text-violet-700 text-sm font-medium hover:bg-violet-100 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
               {autoFilling ? (
                 <><span className="animate-spin">⟳</span> KI füllt aus…</>

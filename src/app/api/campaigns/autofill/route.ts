@@ -6,21 +6,22 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 export async function POST(req: NextRequest) {
   const { companyName, offer, leadType, industry } = await req.json();
 
-  if (!offer?.trim()) {
-    return NextResponse.json({ error: "offer required" }, { status: 400 });
+  if (!companyName?.trim() && !offer?.trim()) {
+    return NextResponse.json({ error: "companyName or offer required" }, { status: 400 });
   }
 
   const prompt = `Du bist ein Sales-Copywriting-Experte für Revenue Reactivation Kampagnen.
 
 Basierend auf diesen Angaben:
 - Unternehmensname: ${companyName || "nicht angegeben"}
-- Produkt / Dienstleistung: ${offer}
+- Produkt / Dienstleistung: ${offer || "nicht angegeben — bitte aus dem Firmennamen ableiten"}
 - Lead-Typ: ${leadType === "b2b" ? "B2B (Unternehmen)" : "B2C (Privatpersonen)"}
 ${industry ? `- Branche: ${industry}` : ""}
 
 Generiere präzise, spezifische Texte für folgende Felder. Antworte NUR mit gültigem JSON, kein Markdown.
 
 {
+  "offer": "Konkretes Kampagnen-Produkt/Angebot basierend auf dem Unternehmen (max 80 Zeichen)",
   "industry": "Branche des Unternehmens (max 30 Zeichen)",
   "companyDescription": "1-Satz Beschreibung was das Unternehmen macht (max 120 Zeichen)",
   "usps": "2-3 Alleinstellungsmerkmale, kommagetrennt (max 100 Zeichen)",
