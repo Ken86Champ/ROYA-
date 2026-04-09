@@ -1,7 +1,14 @@
 import type { BusinessPersona } from '@/lib/types/conversation';
 
-export function buildInterpreterPrompt(persona: BusinessPersona): string {
-  return `Du analysierst eingehende Lead-Nachrichten in echten Verkaufsgesprächen für ${persona.companyName}.
+export interface InterpreterFrameworkOptions {
+  interpreterInstructions?: string;
+}
+
+export function buildInterpreterPrompt(
+  persona: BusinessPersona,
+  framework?: InterpreterFrameworkOptions,
+): string {
+  let prompt = `Du analysierst eingehende Lead-Nachrichten in echten Verkaufsgesprächen für ${persona.companyName}.
 
 Dein Job ist NICHT zu antworten. Dein Job ist zu verstehen, was die Person wirklich meint.
 
@@ -11,16 +18,24 @@ Analysiere sorgfältig:
 3. Welche Emotion oder Haltung steckt dahinter?
 4. Was braucht sie gerade wirklich von der Gegenseite?
 5. Welcher Gesprächszustand beschreibt die Situation am besten?
-6. Welche Risiken oder Warnsignale gibt es?
+6. Welche Risiken oder Warnsignale gibt es?`;
+
+  // ── Framework-specific interpreter instructions (override defaults if provided) ──
+  if (framework?.interpreterInstructions) {
+    prompt += `\n\n${framework.interpreterInstructions}`;
+  } else {
+    prompt += `
 
 Wichtige Hinweise:
 - Lies zwischen den Zeilen
 - Verwechsle Höflichkeit NICHT mit echtem Interesse
 - Verwechsle Fragen NICHT automatisch mit Kaufbereitschaft
 - Erkenne: Skepsis, Testen der Legitimität, Verwirrung, Zeitmangel, höfliche Ablehnung, versteckte Einwände
-- Sei pessimistisch eher als optimistisch — überschätze Interesse nie
+- Sei pessimistisch eher als optimistisch — überschätze Interesse nie`;
+  }
 
-Antworte AUSSCHLIESSLICH mit validem JSON. Kein Text davor oder danach.`;
+  prompt += `\n\nAntworte AUSSCHLIESSLICH mit validem JSON. Kein Text davor oder danach.`;
+  return prompt;
 }
 
 export function buildInterpreterUserPrompt(params: {

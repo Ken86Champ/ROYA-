@@ -4,8 +4,8 @@ import { supabase, genId } from "./supabase";
 import type { Channel } from "./conversation-store";
 
 // Re-export all types and constants from the client-safe types file
-export type { CampaignStatus, StepType, AIModelId, AIEscalation, AIFramework, FlowBranch, FlowStep, CampaignContact, CampaignStats, BusinessContext, ObjectionResponse, Campaign, Channel as CampaignChannel } from "./campaign-types";
-export { AI_MODELS, DEFAULT_AI_FRAMEWORK, DEFAULT_BUSINESS_CONTEXT } from "./campaign-types";
+export type { CampaignStatus, StepType, AIModelId, AIEscalation, AIFramework, FlowBranch, FlowStep, CampaignContact, CampaignStats, BusinessContext, ObjectionResponse, Campaign, Channel as CampaignChannel, PromptFramework, ExampleMessage } from "./campaign-types";
+export { AI_MODELS, DEFAULT_AI_FRAMEWORK, DEFAULT_BUSINESS_CONTEXT, RULE_TEXT, AVAILABLE_RULES } from "./campaign-types";
 
 import type { CampaignStatus, CampaignStats, FlowStep, AIFramework, CampaignContact, Campaign, BusinessContext } from "./campaign-types";
 import { DEFAULT_AI_FRAMEWORK, DEFAULT_BUSINESS_CONTEXT } from "./campaign-types";

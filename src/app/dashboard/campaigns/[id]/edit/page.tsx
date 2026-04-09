@@ -1,8 +1,8 @@
 "use client";
 import { useState, useRef, useEffect, use } from "react";
 import { useRouter } from "next/navigation";
-import type { Campaign, FlowStep, StepType, FlowBranch, AIFramework, AIModelId, CampaignContact, BusinessContext } from "@/lib/campaign-types";
-import { AI_MODELS, DEFAULT_AI_FRAMEWORK, DEFAULT_BUSINESS_CONTEXT } from "@/lib/campaign-types";
+import type { Campaign, FlowStep, StepType, FlowBranch, AIFramework, AIModelId, CampaignContact, BusinessContext, PromptFramework } from "@/lib/campaign-types";
+import { AI_MODELS, DEFAULT_AI_FRAMEWORK, DEFAULT_BUSINESS_CONTEXT, RULE_TEXT, AVAILABLE_RULES } from "@/lib/campaign-types";
 import type { Client } from "@/lib/client-store";
 
 // ─── STYLING ──────────────────────────────────────────────────────────────────
@@ -84,7 +84,7 @@ function genId() { return `step_${Date.now()}_${Math.random().toString(36).slice
 
 // ─── STEP BAR ─────────────────────────────────────────────────────────────────
 
-type WizardStep = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+type WizardStep = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
 const WIZARD_STEPS = [
   { n: 1, label: "Kontakte" },
@@ -92,8 +92,9 @@ const WIZARD_STEPS = [
   { n: 3, label: "Unternehmen" },
   { n: 4, label: "Einrichten" },
   { n: 5, label: "KI-Setup" },
-  { n: 6, label: "Flow" },
-  { n: 7, label: "Speichern" },
+  { n: 6, label: "Framework" },
+  { n: 7, label: "Flow" },
+  { n: 8, label: "Speichern" },
 ];
 
 function StepBar({ current, maxReached, onNavigate }: {
@@ -137,7 +138,12 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
   const [step, setStep] = useState<WizardStep>(3);
-  const [maxStep, setMaxStep] = useState<WizardStep>(7);
+  const [maxStep, setMaxStep] = useState<WizardStep>(8);
+
+  // Step 6 — Framework
+  const [frameworks, setFrameworks] = useState<PromptFramework[]>([]);
+  const [frameworksLoading, setFrameworksLoading] = useState(false);
+  const [frameworkExpanded, setFrameworkExpanded] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editingStep, setEditingStep] = useState<string | null>(null);
@@ -192,6 +198,21 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
       setLoading(false);
     });
   }, [id]);
+
+  // Load frameworks when reaching step 6
+  useEffect(() => {
+    if (step === 6 && frameworks.length === 0 && !frameworksLoading) {
+      setFrameworksLoading(true);
+      fetch("/api/frameworks").then(r => r.json()).then((d: PromptFramework[]) => {
+        setFrameworks(d);
+        if (!form.aiFramework.frameworkId && d.length > 0) {
+          const std = d.find((f: PromptFramework) => f.name === "ROYA Standard") || d[0];
+          setForm(prev => ({ ...prev, aiFramework: { ...prev.aiFramework, frameworkId: std.id } }));
+        }
+        setFrameworksLoading(false);
+      }).catch(() => setFrameworksLoading(false));
+    }
+  }, [step]);
 
   const goToStep = (s: WizardStep) => {
     setStep(s);
@@ -1003,14 +1024,125 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
 
             <div className="flex gap-3">
               <button onClick={() => setStep(4)} className="flex-1 btn-secondary py-2.5 text-sm">← Zurück</button>
-              <button onClick={() => goToStep(6)} className="flex-1 btn-primary py-2.5 text-sm">Weiter → Flow Designer</button>
+              <button onClick={() => goToStep(6)} className="flex-1 btn-primary py-2.5 text-sm">Weiter → Framework</button>
             </div>
           </div>
         );
       })()}
 
-      {/* ── STEP 6: Flow Designer ── */}
-      {step === 6 && (
+      {/* ── STEP 6: Prompt-Framework ── */}
+      {step === 6 && (() => {
+        const selected = frameworks.find(f => f.id === form.aiFramework.frameworkId);
+        return (
+          <div className="space-y-4">
+            <div className="glass-card p-5">
+              <h2 className="text-base font-semibold text-slate-800 mb-1">Prompt-Framework</h2>
+              <p className="text-xs text-slate-400 mb-4">Definiert wie die KI kommuniziert — Ton, Regeln, Kreativität und Beispiele.</p>
+
+              {frameworksLoading ? (
+                <div className="text-center py-8 text-sm text-slate-400">Lade Frameworks …</div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  {frameworks.map(fw => (
+                    <button key={fw.id}
+                      onClick={() => setForm(prev => ({ ...prev, aiFramework: { ...prev.aiFramework, frameworkId: fw.id } }))}
+                      className={`text-left p-3 rounded-xl border transition-all ${
+                        fw.id === form.aiFramework.frameworkId
+                          ? "border-violet-400 bg-violet-50 ring-1 ring-violet-300"
+                          : "border-slate-200 bg-white hover:border-slate-300"
+                      }`}>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-sm font-medium text-slate-800">{fw.name}</span>
+                        {fw.isSystem && <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-400">System</span>}
+                      </div>
+                      <p className="text-[11px] text-slate-400 leading-snug">{fw.description}</p>
+                      <div className="flex items-center gap-2 mt-2">
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-600">T={fw.temperature}</span>
+                        <span className="text-[10px] text-slate-300">{fw.rules.length} Regeln</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {selected && (
+              <div className="glass-card p-5">
+                <button onClick={() => setFrameworkExpanded(!frameworkExpanded)}
+                  className="w-full flex items-center justify-between text-left">
+                  <h3 className="text-sm font-semibold text-slate-700">Details: {selected.name}</h3>
+                  <span className="text-slate-400 text-xs">{frameworkExpanded ? "▼" : "▶"}</span>
+                </button>
+
+                {frameworkExpanded && (
+                  <div className="mt-4 space-y-4">
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1 block">Kreativität (Temperature)</label>
+                      <div className="flex items-center gap-3">
+                        <input type="range" min="0.1" max="1.0" step="0.1" value={selected.temperature} disabled={selected.isSystem} className="flex-1 accent-violet-500" onChange={() => {}} />
+                        <span className="text-sm font-mono text-slate-600 w-8 text-right">{selected.temperature}</span>
+                      </div>
+                      <p className="text-[10px] text-slate-300 mt-1">0.1 = konsistent · 0.5 = ausgewogen · 1.0 = kreativ</p>
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1 block">Aktive Regeln</label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {selected.rules.map(r => (
+                          <span key={r} className="text-[11px] px-2 py-1 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-100">{RULE_TEXT[r] || r}</span>
+                        ))}
+                        {selected.rules.length === 0 && <span className="text-[11px] text-slate-300">Keine Regeln definiert</span>}
+                      </div>
+                    </div>
+                    {selected.forbiddenPhrases.length > 0 && (
+                      <div>
+                        <label className="text-xs font-medium text-slate-500 mb-1 block">Verbotene Ausdrücke</label>
+                        <div className="flex flex-wrap gap-1.5">
+                          {selected.forbiddenPhrases.map((p, i) => (
+                            <span key={i} className="text-[11px] px-2 py-1 rounded-lg bg-red-50 text-red-500 border border-red-100">{p}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1 block">Writer-Anweisungen</label>
+                      <div className="bg-slate-50 rounded-xl p-3 text-xs text-slate-600 whitespace-pre-wrap max-h-32 overflow-y-auto">{selected.writerInstructions || "—"}</div>
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1 block">Strategist-Anweisungen</label>
+                      <div className="bg-slate-50 rounded-xl p-3 text-xs text-slate-600 whitespace-pre-wrap max-h-32 overflow-y-auto">{selected.strategistInstructions || "—"}</div>
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1 block">Interpreter-Anweisungen</label>
+                      <div className="bg-slate-50 rounded-xl p-3 text-xs text-slate-600 whitespace-pre-wrap max-h-32 overflow-y-auto">{selected.interpreterInstructions || "—"}</div>
+                    </div>
+                    {selected.exampleMessages.length > 0 && (
+                      <div>
+                        <label className="text-xs font-medium text-slate-500 mb-1 block">Beispiel-Nachrichten</label>
+                        <div className="space-y-2">
+                          {selected.exampleMessages.map((ex, i) => (
+                            <div key={i} className="bg-slate-50 rounded-xl p-3 text-xs">
+                              <span className="font-medium text-violet-500">{ex.context}:</span>{" "}
+                              <span className="text-slate-600">{ex.message}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button onClick={() => setStep(5)} className="flex-1 btn-secondary py-2.5 text-sm">← Zurück</button>
+              <button onClick={() => goToStep(7)} className="flex-1 btn-primary py-2.5 text-sm">Weiter → Flow Designer</button>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── STEP 7: Flow Designer ── */}
+      {step === 7 && (
         <div className="space-y-4">
           <div className="glass-card p-5">
             <div className="flex items-center justify-between mb-4">
@@ -1174,14 +1306,14 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
           </div>
 
           <div className="flex gap-3">
-            <button onClick={() => setStep(5)} className="flex-1 btn-secondary py-2.5 text-sm">← Zurück</button>
-            <button onClick={() => goToStep(7)} className="flex-1 btn-primary py-2.5 text-sm">Weiter → Speichern</button>
+            <button onClick={() => setStep(6)} className="flex-1 btn-secondary py-2.5 text-sm">← Zurück</button>
+            <button onClick={() => goToStep(8)} className="flex-1 btn-primary py-2.5 text-sm">Weiter → Speichern</button>
           </div>
         </div>
       )}
 
-      {/* ── STEP 7: Save ── */}
-      {step === 7 && (
+      {/* ── STEP 8: Save ── */}
+      {step === 8 && (
         <div className="glass-card p-6 space-y-5">
           <h2 className="text-base font-semibold text-slate-800">Änderungen speichern</h2>
           <div className="bg-slate-50 border border-slate-200 rounded-xl divide-y divide-slate-100">
@@ -1209,7 +1341,7 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
             </p>
           </div>
           <div className="flex gap-3">
-            <button onClick={() => setStep(6)} disabled={saving} className="flex-1 btn-secondary py-2.5 text-sm disabled:opacity-40">← Zurück</button>
+            <button onClick={() => setStep(7)} disabled={saving} className="flex-1 btn-secondary py-2.5 text-sm disabled:opacity-40">← Zurück</button>
             <button onClick={handleSave} disabled={saving}
               className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all text-white ${
                 saving ? "bg-violet-500" : "bg-violet-600 hover:bg-violet-500"

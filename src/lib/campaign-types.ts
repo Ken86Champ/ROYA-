@@ -5,6 +5,42 @@ export type Channel = "sms" | "whatsapp" | "email";
 export type CampaignStatus = "draft" | "active" | "paused" | "completed";
 export type StepType = "opener" | "followup" | "breakup" | "booking" | "condition" | "exit";
 
+// ─── Prompt Framework (Template Library) ───────────────────────────────────────
+
+export interface ExampleMessage {
+  context: string;   // e.g. "Lead fragt nach Preis"
+  message: string;   // e.g. "Fair enough — welches Budget hast du dir vorgestellt?"
+}
+
+export interface PromptFramework {
+  id: string;
+  agencyId?: string;         // null = system-wide default
+  name: string;
+  description: string;
+  isSystem: boolean;          // true = can't delete, only duplicate
+  writerInstructions: string;
+  strategistInstructions: string;
+  interpreterInstructions: string;
+  rules: string[];
+  forbiddenPhrases: string[];
+  temperature: number;        // 0.1–1.0 (writer creativity)
+  exampleMessages: ExampleMessage[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export const RULE_TEXT: Record<string, string> = {
+  max_2_sentences:    "Antworte mit maximal 2 kurzen Sätzen.",
+  end_with_question:  "Beende jede Antwort mit einer Frage.",
+  no_price_in_opener: "Erwähne niemals Preise im ersten Kontakt.",
+  use_first_name:     "Sprich den Lead mit Vornamen an.",
+  no_emoji:           "Verwende keine Emojis.",
+  no_dashes:          "Keine Bindestriche/Gedankenstriche in Nachrichten.",
+  swiss_german_ok:    "Schweizerdeutsche Ausdrücke sind erlaubt.",
+};
+
+export const AVAILABLE_RULES = Object.keys(RULE_TEXT);
+
 // ─── AI Framework ──────────────────────────────────────────────────────────────
 
 export type AIModelId =
@@ -39,6 +75,7 @@ export interface AIFramework {
   escalation: AIEscalation;
   systemPrompt: string;
   rules: string[];
+  frameworkId?: string;       // references prompt_frameworks.id
 }
 
 export const DEFAULT_AI_FRAMEWORK: AIFramework = {

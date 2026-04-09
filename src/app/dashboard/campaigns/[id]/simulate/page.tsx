@@ -1,7 +1,7 @@
 "use client";
 import { useState, useRef, useEffect, use } from "react";
 import { useRouter } from "next/navigation";
-import type { Campaign, FlowStep, CampaignContact } from "@/lib/campaign-types";
+import type { Campaign, FlowStep, CampaignContact, PromptFramework } from "@/lib/campaign-types";
 
 // ─── TYPES ────────────────────────────────────────────────────────────────────
 
@@ -237,6 +237,10 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
   const [liveTestChannel, setLiveTestChannel] = useState<"sms" | "whatsapp">("sms");
   const [liveTestSending, setLiveTestSending] = useState(false);
   const [liveTestResult, setLiveTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [activeFramework, setActiveFramework] = useState<PromptFramework | null>(null);
+  const [referenceDoc, setReferenceDoc] = useState<string | null>(null);
+  const [referenceFileName, setReferenceFileName] = useState<string | null>(null);
+  const refFileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     fetch(`/api/campaigns/${id}`)
@@ -248,6 +252,13 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
         if (!c.id) throw new Error("Ungültige Kampagne");
         setCampaign(c);
         setLoading(false);
+        // Load the campaign's prompt framework if linked
+        if (c.aiFramework?.frameworkId) {
+          fetch(`/api/frameworks/${c.aiFramework.frameworkId}`)
+            .then(r => r.ok ? r.json() : null)
+            .then(fw => { if (fw) setActiveFramework(fw); })
+            .catch(() => {});
+        }
       })
       .catch(() => setLoading(false));
   }, [id]);
@@ -361,18 +372,33 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
             rules: campaign.aiFramework?.rules ?? [],
             systemPrompt: campaign.aiFramework?.systemPrompt || "",
           },
+          // Send full framework data if available
+          ...(activeFramework ? {
+            framework: {
+              writerInstructions: activeFramework.writerInstructions,
+              strategistInstructions: activeFramework.strategistInstructions,
+              interpreterInstructions: activeFramework.interpreterInstructions,
+              rules: activeFramework.rules,
+              forbiddenPhrases: activeFramework.forbiddenPhrases,
+              temperature: activeFramework.temperature,
+              exampleMessages: activeFramework.exampleMessages,
+            },
+          } : {}),
+          // Reference document for style guidance
+          ...(referenceDoc ? { referenceDoc } : {}),
         }),
       });
       const data = await res.json();
       setTyping(false);
-      if (data.reply) {
-        const followupIdx = (campaign.flow ?? []).findIndex(s => s.type === "followup");
-        addMsg("agent", data.reply, followupIdx >= 0 ? followupIdx : 1);
-        setHistory(h => [...h, { role: "agent", body: data.reply }]);
-      }
+      const reply = data.reply || data.error || "⚠ Keine Antwort erhalten.";
+      const followupIdx = (campaign.flow ?? []).findIndex(s => s.type === "followup");
+      addMsg("agent", reply, followupIdx >= 0 ? followupIdx : 1);
+      setHistory(h => [...h, { role: "agent", body: reply }]);
     } catch {
       setTyping(false);
-      addMsg("agent", "⚠ Verbindungsfehler.");
+      const fallback = "⚠ Verbindungsfehler — bitte nochmal versuchen.";
+      addMsg("agent", fallback);
+      setHistory(h => [...h, { role: "agent", body: fallback }]);
     }
   };
 
@@ -561,6 +587,74 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
           onEditMsg={setEditingMsg}
           channel={channel}
         />
+
+        {/* Export chat */}
+        {messages.length > 0 && (
+          <button
+            onClick={() => {
+              const lead = selectedContact;
+              const lines = [
+                `Chat-Export: ${campaign.name}`,
+                `Lead: ${lead?.name ?? "?"} (${lead?.contact ?? ""})`,
+                `Datum: ${new Date().toLocaleDateString("de-CH")} ${new Date().toLocaleTimeString("de-CH")}`,
+                `Framework: ${activeFramework?.name ?? "Standard"}`,
+                "",
+                ...messages.map(m => `[${m.time}] ${m.role === "agent" ? campaign.aiFramework?.agentName ?? "Agent" : lead?.name ?? "Lead"}: ${m.text}`),
+              ];
+              const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `chat-${lead?.name?.replace(/\s+/g, "-") ?? "export"}-${new Date().toISOString().slice(0, 10)}.txt`;
+              a.click();
+              URL.revokeObjectURL(url);
+            }}
+            className="w-[340px] py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-500 hover:border-violet-300 hover:text-violet-600 transition-all flex items-center justify-center gap-2"
+          >
+            <span>↓</span> Chat-Verlauf exportieren ({messages.length} Nachrichten)
+          </button>
+        )}
+
+        {/* Reference document upload */}
+        <div className="w-[340px] bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-3">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-800">Referenz-Dokument</h3>
+            <p className="text-xs text-slate-400 mt-0.5">Lade ein korrigiertes Chat-Protokoll oder Stilvorlage hoch. Die KI übernimmt diesen Kommunikationsstil.</p>
+          </div>
+          <input ref={refFileRef} type="file" accept=".txt,.md,.csv" className="hidden" onChange={e => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = ev => {
+              const text = ev.target?.result as string;
+              if (text && text.length > 0) {
+                setReferenceDoc(text.slice(0, 15000));
+                setReferenceFileName(file.name);
+              }
+            };
+            reader.readAsText(file, "UTF-8");
+            e.target.value = "";
+          }} />
+          {referenceDoc ? (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 bg-violet-50 border border-violet-200 rounded-xl px-3 py-2">
+                <span className="text-violet-500 text-sm">✓</span>
+                <span className="text-xs text-violet-700 font-medium flex-1 truncate">{referenceFileName}</span>
+                <span className="text-[10px] text-violet-400">{(referenceDoc.length / 1000).toFixed(1)}k Zeichen</span>
+              </div>
+              <div className="bg-slate-50 rounded-xl p-3 text-[11px] text-slate-500 max-h-24 overflow-y-auto whitespace-pre-wrap font-mono">{referenceDoc.slice(0, 500)}{referenceDoc.length > 500 ? "…" : ""}</div>
+              <div className="flex gap-2">
+                <button onClick={() => refFileRef.current?.click()} className="flex-1 py-1.5 rounded-lg text-xs font-medium border border-slate-200 text-slate-500 bg-slate-50 hover:border-violet-300 transition-all">Ersetzen</button>
+                <button onClick={() => { setReferenceDoc(null); setReferenceFileName(null); }} className="flex-1 py-1.5 rounded-lg text-xs font-medium border border-red-200 text-red-500 bg-red-50 hover:border-red-300 transition-all">Entfernen</button>
+              </div>
+            </div>
+          ) : (
+            <button onClick={() => refFileRef.current?.click()}
+              className="w-full py-3 border-2 border-dashed border-slate-200 rounded-xl text-xs text-slate-400 hover:border-violet-300 hover:text-violet-500 transition-all">
+              ↑ .txt oder .md hochladen
+            </button>
+          )}
+        </div>
 
         {/* Live Test senden */}
         {messages.some(m => m.role === "agent") && (

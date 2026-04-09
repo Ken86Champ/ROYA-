@@ -5,6 +5,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { buildInterpreterPrompt, buildInterpreterUserPrompt } from './prompts/interpreter.prompt';
+import type { InterpreterFrameworkOptions } from './prompts/interpreter.prompt';
 import type { MessageInterpretation, ConversationContext } from '@/lib/types/conversation';
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -27,15 +28,22 @@ const FALLBACK_INTERPRETATION: MessageInterpretation = {
   riskFlags: [],
 };
 
+export interface InterpreterOptions {
+  framework?: InterpreterFrameworkOptions;
+  temperature?: number;
+}
+
 export async function interpretMessage(
   context: ConversationContext,
   incomingMessage: string,
+  options?: InterpreterOptions,
 ): Promise<MessageInterpretation> {
   try {
     const response = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 600,
-      system: buildInterpreterPrompt(context.business),
+      temperature: options?.temperature ?? 0.3,
+      system: buildInterpreterPrompt(context.business, options?.framework),
       messages: [{
         role: 'user',
         content: buildInterpreterUserPrompt({

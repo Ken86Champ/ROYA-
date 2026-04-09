@@ -5,6 +5,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { buildStrategistPrompt, buildStrategistUserPrompt } from './prompts/strategist.prompt';
+import type { StrategistFrameworkOptions } from './prompts/strategist.prompt';
 import type { StrategyDecision, ConversationContext, MessageInterpretation } from '@/lib/types/conversation';
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -29,15 +30,22 @@ function buildMemoryContext(context: ConversationContext): string {
   return parts.join('\n');
 }
 
+export interface StrategistOptions {
+  framework?: StrategistFrameworkOptions;
+  temperature?: number;
+}
+
 export async function decideStrategy(
   context: ConversationContext,
   interpretation: MessageInterpretation,
+  options?: StrategistOptions,
 ): Promise<StrategyDecision> {
   try {
     const response = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 500,
-      system: buildStrategistPrompt(context.business),
+      temperature: options?.temperature ?? 0.3,
+      system: buildStrategistPrompt(context.business, options?.framework),
       messages: [{
         role: 'user',
         content: buildStrategistUserPrompt({

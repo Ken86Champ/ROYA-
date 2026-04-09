@@ -37,8 +37,29 @@ create table if not exists campaigns (
   booking_link      text,
   target_audience   text,
   lead_type         text,   -- b2b|b2c
-  mode              text not null default 'draft'   -- draft|test|live
+  mode              text not null default 'draft',  -- draft|test|live
+  framework_id      text                            -- references prompt_frameworks(id)
 );
+
+-- Prompt Frameworks (reusable AI behavior templates)
+create table if not exists prompt_frameworks (
+  id                       text primary key,
+  agency_id                text,
+  name                     text not null,
+  description              text default '',
+  is_system                boolean default false,
+  writer_instructions      text default '',
+  strategist_instructions  text default '',
+  interpreter_instructions text default '',
+  rules                    text[] default '{}',
+  forbidden_phrases        text[] default '{}',
+  temperature              numeric default 0.5,
+  example_messages         jsonb default '[]',
+  created_at               timestamptz default now(),
+  updated_at               timestamptz default now()
+);
+
+create index if not exists pf_agency_id on prompt_frameworks(agency_id);
 
 -- Campaign contacts (one row per lead per campaign)
 create table if not exists campaign_contacts (

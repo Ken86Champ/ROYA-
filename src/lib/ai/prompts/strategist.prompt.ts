@@ -1,6 +1,15 @@
 import type { BusinessPersona, MessageInterpretation } from '@/lib/types/conversation';
+import { RULE_TEXT } from '@/lib/campaign-types';
 
-export function buildStrategistPrompt(persona: BusinessPersona): string {
+export interface StrategistFrameworkOptions {
+  strategistInstructions?: string;
+  rules?: string[];
+}
+
+export function buildStrategistPrompt(
+  persona: BusinessPersona,
+  framework?: StrategistFrameworkOptions,
+): string {
   let prompt = `Du bist der strategische Gesprächsführer hinter ${persona.agentName} bei ${persona.companyName}.
 
 Du schreibst NICHT die finale Nachricht. Du entscheidest nur den besten nächsten Move.
@@ -27,7 +36,11 @@ Ziel: ${persona.goal}`;
   }
   if (persona.doNotSay) prompt += `\n\nTABU: ${persona.doNotSay}`;
 
-  prompt += `
+  // ── Framework-specific strategy instructions (override defaults if provided) ──
+  if (framework?.strategistInstructions) {
+    prompt += `\n\n${framework.strategistInstructions}`;
+  } else {
+    prompt += `
 
 Deine Prioritäten:
 1. Menschlich bleiben — nie aufdringlich wirken
@@ -42,9 +55,20 @@ Absolutverbote:
 - Kein Druck bei Timing-Einwänden
 - Kein Buchungslink schicken wenn die Person noch nicht warm ist
 - Nicht mehrere Themen in einem Move
-- Nicht auf jeden Einwand mit einem Argument antworten
+- Nicht auf jeden Einwand mit einem Argument antworten`;
+  }
 
-Antworte AUSSCHLIESSLICH mit validem JSON.`;
+  // ── Rules awareness for strategy ──
+  const activeRules = framework?.rules ?? [];
+  if (activeRules.length > 0) {
+    prompt += `\n\nAKTIVE REGELN (berücksichtige in deiner Strategie):`;
+    for (const r of activeRules) {
+      const text = RULE_TEXT[r] || r;
+      prompt += `\n- ${text}`;
+    }
+  }
+
+  prompt += `\n\nAntworte AUSSCHLIESSLICH mit validem JSON.`;
 
   return prompt;
 }

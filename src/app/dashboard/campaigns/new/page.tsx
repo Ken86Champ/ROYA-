@@ -1,8 +1,8 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import type { FlowStep, StepType, FlowBranch, AIFramework, AIModelId, BusinessContext } from "@/lib/campaign-types";
-import { AI_MODELS, DEFAULT_AI_FRAMEWORK, DEFAULT_BUSINESS_CONTEXT } from "@/lib/campaign-types";
+import type { FlowStep, StepType, FlowBranch, AIFramework, AIModelId, BusinessContext, PromptFramework } from "@/lib/campaign-types";
+import { AI_MODELS, DEFAULT_AI_FRAMEWORK, DEFAULT_BUSINESS_CONTEXT, RULE_TEXT, AVAILABLE_RULES } from "@/lib/campaign-types";
 import type { Client } from "@/lib/client-store";
 
 // ─── STYLING ──────────────────────────────────────────────────────────────────
@@ -93,7 +93,7 @@ function defaultFlow(): FlowStep[] {
 
 // ─── STEP BAR ─────────────────────────────────────────────────────────────────
 
-type WizardStep = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+type WizardStep = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
 const WIZARD_STEPS = [
   { n: 1, label: "Upload" },
@@ -101,8 +101,9 @@ const WIZARD_STEPS = [
   { n: 3, label: "Unternehmen" },
   { n: 4, label: "Einrichten" },
   { n: 5, label: "KI-Setup" },
-  { n: 6, label: "Flow" },
-  { n: 7, label: "Starten" },
+  { n: 6, label: "Framework" },
+  { n: 7, label: "Flow" },
+  { n: 8, label: "Starten" },
 ];
 
 function StepBar({ current, maxReached, onNavigate }: {
@@ -191,6 +192,11 @@ export default function NewCampaignPage() {
   const [autoFilling, setAutoFilling] = useState(false);
   const [openBlocks, setOpenBlocks] = useState<Record<string, boolean>>({ b1: true, b2: true, b3: false, b4: false, b5: false });
 
+  // Step 6 — Framework
+  const [frameworks, setFrameworks] = useState<PromptFramework[]>([]);
+  const [frameworksLoading, setFrameworksLoading] = useState(false);
+  const [frameworkExpanded, setFrameworkExpanded] = useState(false);
+
   // Auto-save form to localStorage
   useEffect(() => {
     try { localStorage.setItem('roya_new_campaign', JSON.stringify(form)); } catch { /* ignore */ }
@@ -199,6 +205,21 @@ export default function NewCampaignPage() {
   useEffect(() => {
     fetch("/api/clients").then(r => r.json()).then(setClients).catch(() => {});
   }, []);
+
+  // Load frameworks when reaching step 6
+  useEffect(() => {
+    if (step === 6 && frameworks.length === 0 && !frameworksLoading) {
+      setFrameworksLoading(true);
+      fetch("/api/frameworks").then(r => r.json()).then((d: PromptFramework[]) => {
+        setFrameworks(d);
+        if (!form.aiFramework.frameworkId && d.length > 0) {
+          const std = d.find((f: PromptFramework) => f.name === "ROYA Standard") || d[0];
+          setForm(prev => ({ ...prev, aiFramework: { ...prev.aiFramework, frameworkId: std.id } }));
+        }
+        setFrameworksLoading(false);
+      }).catch(() => setFrameworksLoading(false));
+    }
+  }, [step]);
 
   const goToStep = (s: WizardStep) => {
     setStep(s);
@@ -317,7 +338,7 @@ export default function NewCampaignPage() {
           ← Zurück zu Kampagnen
         </button>
         <h1 className="text-2xl font-bold text-slate-900">Kampagnen-Engine</h1>
-        <p className="text-slate-400 text-sm mt-1">In 7 Schritten von der CSV zur vollständigen Kampagne</p>
+        <p className="text-slate-400 text-sm mt-1">In 8 Schritten von der CSV zur vollständigen Kampagne</p>
       </div>
 
       <StepBar current={step} maxReached={maxStep} onNavigate={goToStep} />
@@ -954,14 +975,151 @@ export default function NewCampaignPage() {
 
             <div className="flex gap-3">
               <button onClick={() => setStep(4)} className="flex-1 btn-secondary py-2.5 text-sm">← Zurück</button>
-              <button onClick={() => goToStep(6)} className="flex-1 btn-primary py-2.5 text-sm">Weiter → Flow Designer</button>
+              <button onClick={() => goToStep(6)} className="flex-1 btn-primary py-2.5 text-sm">Weiter → Framework</button>
             </div>
           </div>
         );
       })()}
 
-      {/* ── STEP 6: Flow Designer ── */}
-      {step === 6 && (
+      {/* ── STEP 6: Prompt-Framework ── */}
+      {step === 6 && (() => {
+        const selected = frameworks.find(f => f.id === form.aiFramework.frameworkId);
+        return (
+          <div className="space-y-4">
+            <div className="glass-card p-5">
+              <h2 className="text-base font-semibold text-slate-800 mb-1">Prompt-Framework</h2>
+              <p className="text-xs text-slate-400 mb-4">Definiert wie die KI kommuniziert — Ton, Regeln, Kreativität und Beispiele.</p>
+
+              {frameworksLoading ? (
+                <div className="text-center py-8 text-sm text-slate-400">Lade Frameworks …</div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  {frameworks.map(fw => (
+                    <button key={fw.id}
+                      onClick={() => setForm(prev => ({ ...prev, aiFramework: { ...prev.aiFramework, frameworkId: fw.id } }))}
+                      className={`text-left p-3 rounded-xl border transition-all ${
+                        fw.id === form.aiFramework.frameworkId
+                          ? "border-violet-400 bg-violet-50 ring-1 ring-violet-300"
+                          : "border-slate-200 bg-white hover:border-slate-300"
+                      }`}>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-sm font-medium text-slate-800">{fw.name}</span>
+                        {fw.isSystem && <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-400">System</span>}
+                      </div>
+                      <p className="text-[11px] text-slate-400 leading-snug">{fw.description}</p>
+                      <div className="flex items-center gap-2 mt-2">
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-600">T={fw.temperature}</span>
+                        <span className="text-[10px] text-slate-300">{fw.rules.length} Regeln</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Preview selected framework */}
+            {selected && (
+              <div className="glass-card p-5">
+                <button onClick={() => setFrameworkExpanded(!frameworkExpanded)}
+                  className="w-full flex items-center justify-between text-left">
+                  <h3 className="text-sm font-semibold text-slate-700">Details: {selected.name}</h3>
+                  <span className="text-slate-400 text-xs">{frameworkExpanded ? "▼" : "▶"}</span>
+                </button>
+
+                {frameworkExpanded && (
+                  <div className="mt-4 space-y-4">
+                    {/* Temperature */}
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1 block">Kreativität (Temperature)</label>
+                      <div className="flex items-center gap-3">
+                        <input type="range" min="0.1" max="1.0" step="0.1"
+                          value={selected.temperature}
+                          disabled={selected.isSystem}
+                          className="flex-1 accent-violet-500"
+                          onChange={() => {}} />
+                        <span className="text-sm font-mono text-slate-600 w-8 text-right">{selected.temperature}</span>
+                      </div>
+                      <p className="text-[10px] text-slate-300 mt-1">0.1 = konsistent · 0.5 = ausgewogen · 1.0 = kreativ</p>
+                    </div>
+
+                    {/* Rules */}
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1 block">Aktive Regeln</label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {selected.rules.map(r => (
+                          <span key={r} className="text-[11px] px-2 py-1 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-100">
+                            {RULE_TEXT[r] || r}
+                          </span>
+                        ))}
+                        {selected.rules.length === 0 && <span className="text-[11px] text-slate-300">Keine Regeln definiert</span>}
+                      </div>
+                    </div>
+
+                    {/* Forbidden phrases */}
+                    {selected.forbiddenPhrases.length > 0 && (
+                      <div>
+                        <label className="text-xs font-medium text-slate-500 mb-1 block">Verbotene Ausdrücke</label>
+                        <div className="flex flex-wrap gap-1.5">
+                          {selected.forbiddenPhrases.map((p, i) => (
+                            <span key={i} className="text-[11px] px-2 py-1 rounded-lg bg-red-50 text-red-500 border border-red-100">{p}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Writer instructions */}
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1 block">Writer-Anweisungen</label>
+                      <div className="bg-slate-50 rounded-xl p-3 text-xs text-slate-600 whitespace-pre-wrap max-h-32 overflow-y-auto">
+                        {selected.writerInstructions || "—"}
+                      </div>
+                    </div>
+
+                    {/* Strategist instructions */}
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1 block">Strategist-Anweisungen</label>
+                      <div className="bg-slate-50 rounded-xl p-3 text-xs text-slate-600 whitespace-pre-wrap max-h-32 overflow-y-auto">
+                        {selected.strategistInstructions || "—"}
+                      </div>
+                    </div>
+
+                    {/* Interpreter instructions */}
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1 block">Interpreter-Anweisungen</label>
+                      <div className="bg-slate-50 rounded-xl p-3 text-xs text-slate-600 whitespace-pre-wrap max-h-32 overflow-y-auto">
+                        {selected.interpreterInstructions || "—"}
+                      </div>
+                    </div>
+
+                    {/* Example messages */}
+                    {selected.exampleMessages.length > 0 && (
+                      <div>
+                        <label className="text-xs font-medium text-slate-500 mb-1 block">Beispiel-Nachrichten</label>
+                        <div className="space-y-2">
+                          {selected.exampleMessages.map((ex, i) => (
+                            <div key={i} className="bg-slate-50 rounded-xl p-3 text-xs">
+                              <span className="font-medium text-violet-500">{ex.context}:</span>{" "}
+                              <span className="text-slate-600">{ex.message}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button onClick={() => setStep(5)} className="flex-1 btn-secondary py-2.5 text-sm">← Zurück</button>
+              <button onClick={() => goToStep(7)} className="flex-1 btn-primary py-2.5 text-sm">Weiter → Flow Designer</button>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── STEP 7: Flow Designer ── */}
+      {step === 7 && (
         <div className="space-y-4">
           <div className="glass-card p-5">
             <div className="flex items-center justify-between mb-4">
@@ -1125,14 +1283,14 @@ export default function NewCampaignPage() {
           </div>
 
           <div className="flex gap-3">
-            <button onClick={() => setStep(5)} className="flex-1 btn-secondary py-2.5 text-sm">← Zurück</button>
-            <button onClick={() => goToStep(7)} className="flex-1 btn-primary py-2.5 text-sm">Weiter → Starten</button>
+            <button onClick={() => setStep(6)} className="flex-1 btn-secondary py-2.5 text-sm">← Zurück</button>
+            <button onClick={() => goToStep(8)} className="flex-1 btn-primary py-2.5 text-sm">Weiter → Starten</button>
           </div>
         </div>
       )}
 
-      {/* ── STEP 7: Launch ── */}
-      {step === 7 && (
+      {/* ── STEP 8: Launch ── */}
+      {step === 8 && (
         <div className="glass-card p-6 space-y-5">
           <h2 className="text-base font-semibold text-slate-800">Kampagne starten</h2>
           <div className="bg-slate-50 border border-slate-200 rounded-xl divide-y divide-slate-100">
@@ -1161,7 +1319,7 @@ export default function NewCampaignPage() {
             </p>
           </div>
           <div className="flex gap-3">
-            <button onClick={() => setStep(6)} disabled={launching} className="flex-1 btn-secondary py-2.5 text-sm disabled:opacity-40">← Zurück</button>
+            <button onClick={() => setStep(7)} disabled={launching} className="flex-1 btn-secondary py-2.5 text-sm disabled:opacity-40">← Zurück</button>
             <button onClick={handleLaunch} disabled={launching}
               className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all text-white ${
                 launching ? "bg-emerald-500" : "bg-emerald-600 hover:bg-emerald-500"

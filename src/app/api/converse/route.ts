@@ -15,6 +15,7 @@ import type {
   ConversationScores,
   BusinessPersona,
   ConversationMemory,
+  ConversationState,
 } from '@/lib/types/conversation';
 
 const DEFAULT_SCORES: ConversationScores = {
@@ -26,6 +27,78 @@ const EMPTY_MEMORY: ConversationMemory = {
   bookingReadinessNotes: '',
 };
 
+// ── Derive dynamic scores from conversation history ──
+function deriveScores(history: { role: string; body: string }[]): ConversationScores {
+  const leadMsgs = history.filter(m => m.role === 'lead').map(m => m.body.toLowerCase());
+  const turns = leadMsgs.length;
+  let temperature = 20;
+  let friction = 30;
+  let bookingReadiness = 0;
+  let trust = 10;
+  let risk = 20;
+
+  // Positive signals boost temperature & trust
+  const positiveWords = /ja|interessant|klingt gut|gerne|cool|super|perfekt|top|auf jeden|lets go|bin dabei/;
+  const negativeWords = /nein|kein interesse|stop|lass mich|nervt|aufhören|nie wieder|zu teuer|keine zeit/;
+  const bookingWords = /termin|buche|wann|passt|anruf|treffen|call|gespräch|link/;
+  const questionWords = /was kostet|wie viel|preis|wie funktioniert|mehr info|erzähl/;
+
+  for (const msg of leadMsgs) {
+    if (positiveWords.test(msg)) { temperature += 15; trust += 10; friction = Math.max(0, friction - 10); }
+    if (negativeWords.test(msg)) { temperature -= 10; friction += 15; risk += 10; }
+    if (bookingWords.test(msg)) { bookingReadiness += 25; temperature += 10; }
+    if (questionWords.test(msg)) { temperature += 5; trust += 5; }
+  }
+
+  // Each turn of conversation builds some trust
+  trust += turns * 5;
+  temperature += turns * 3;
+
+  // Clamp all scores 0-100
+  const clamp = (v: number) => Math.max(0, Math.min(100, v));
+  return {
+    temperature: clamp(temperature),
+    friction: clamp(friction),
+    bookingReadiness: clamp(bookingReadiness),
+    trust: clamp(trust),
+    risk: clamp(risk),
+  };
+}
+
+// ── Derive conversation state from scores ──
+function deriveState(scores: ConversationScores, turns: number): ConversationState {
+  if (scores.bookingReadiness >= 60) return 'qualified_ready';
+  if (scores.temperature >= 60 && scores.trust >= 40) return 'warm';
+  if (scores.temperature >= 40) return 'curious';
+  if (scores.temperature >= 30 || turns >= 2) return 'lightly_engaged';
+  return 'new_unaware';
+}
+
+// ── Build memory summary from history ──
+function buildMemoryFromHistory(history: { role: string; body: string }[]): ConversationMemory {
+  const leadMsgs = history.filter(m => m.role === 'lead').map(m => m.body);
+  const agentMsgs = history.filter(m => m.role === 'agent').map(m => m.body);
+  const interests: string[] = [];
+  const keyFacts: string[] = [];
+
+  for (const msg of leadMsgs) {
+    if (msg.length > 5) keyFacts.push(`Lead sagte: "${msg}"`);
+  }
+
+  return {
+    summary: leadMsgs.length > 0
+      ? `${leadMsgs.length} Lead-Nachrichten bisher. Letzte: "${leadMsgs[leadMsgs.length - 1]}"`
+      : '',
+    keyFacts: keyFacts.slice(-5),
+    objectionsSeen: [],
+    interests,
+    constraints: [],
+    lastSuccessfulAngle: agentMsgs.length > 0 ? agentMsgs[agentMsgs.length - 1] : '',
+    lastFailedAngle: '',
+    bookingReadinessNotes: '',
+  };
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -34,11 +107,23 @@ export async function POST(req: NextRequest) {
       message,
       history = [],
       business,
+      framework,
+      referenceDoc,
     }: {
       leadName?: string;
       message: string;
       history?: { role: 'lead' | 'agent'; body: string }[];
-      business?: BusinessPersona;
+      business?: BusinessPersona & { rules?: string[]; systemPrompt?: string };
+      referenceDoc?: string;
+      framework?: {
+        writerInstructions?: string;
+        strategistInstructions?: string;
+        interpreterInstructions?: string;
+        rules?: string[];
+        forbiddenPhrases?: string[];
+        temperature?: number;
+        exampleMessages?: { context: string; message: string }[];
+      };
     } = body;
 
     if (!message) {
@@ -46,6 +131,36 @@ export async function POST(req: NextRequest) {
     }
 
     const persona = business || DEFAULT_PERSONA;
+
+    // ── Build framework options from dedicated framework field or business.rules/systemPrompt ──
+    const fw = framework ?? {};
+    const bizAny = business as unknown as Record<string, unknown> | undefined;
+    const rules = fw.rules ?? (bizAny?.rules as string[] | undefined) ?? [];
+    const forbiddenPhrases = fw.forbiddenPhrases ?? [];
+    const temperature = fw.temperature ?? 0.5;
+    const customSystemPrompt = (bizAny?.systemPrompt as string | undefined) ?? '';
+
+    const writerFramework = {
+      writerInstructions: fw.writerInstructions,
+      rules,
+      forbiddenPhrases,
+      exampleMessages: fw.exampleMessages,
+      customSystemPrompt,
+      referenceDoc: referenceDoc || undefined,
+    };
+    const strategistFramework = {
+      strategistInstructions: fw.strategistInstructions,
+      rules,
+    };
+    const interpreterFramework = {
+      interpreterInstructions: fw.interpreterInstructions,
+    };
+
+    // Derive dynamic scores and state from conversation history
+    const scores = deriveScores(history);
+    const leadTurns = history.filter(m => m.role === 'lead').length;
+    const currentState = deriveState(scores, leadTurns);
+    const memory = buildMemoryFromHistory(history);
 
     // Build minimal context for simulator (no DB needed)
     const historyMessages: HistoryMessage[] = history.map(m => ({
@@ -58,38 +173,54 @@ export async function POST(req: NextRequest) {
       conversationId: 'simulator',
       leadName,
       channel: 'sms',
-      currentState: 'new_unaware',
-      scores: DEFAULT_SCORES,
+      currentState,
+      scores,
       history: historyMessages,
-      memory: EMPTY_MEMORY,
+      memory,
       business: persona,
     };
 
-    // Run the 4-phase pipeline
-    const [interpretation, strategy] = await Promise.all([
-      interpretMessage(context, message),
-      // Strategy needs interpretation first — run sequentially
-    ]).then(async ([interp]) => {
-      const strat = await decideStrategy(context, interp);
-      return [interp, strat] as const;
+    // Run pipeline: Interpreter → Strategist → Writer (with framework options)
+    const interpretation = await interpretMessage(context, message, {
+      framework: interpreterFramework,
+      temperature: 0.3,
+    });
+    const strategy = await decideStrategy(context, interpretation, {
+      framework: strategistFramework,
+      temperature: 0.3,
+    });
+    const phase2 = await writeAndCheck(context, message, interpretation, strategy, {
+      framework: writerFramework,
+      temperature,
     });
 
-    const phase2 = await writeAndCheck(context, message, interpretation, strategy);
+    // Ensure we always have a reply
+    let reply = phase2.finalMessage || '';
+    if (!reply && phase2.shouldHandoff) {
+      reply = `Ich leite das gerne intern weiter — jemand aus dem Team meldet sich bei dir!`;
+    }
+    if (!reply) {
+      reply = `Danke für deine Nachricht! Lass mich da kurz schauen und melde mich gleich.`;
+    }
 
     return NextResponse.json({
-      reply:          phase2.finalMessage,
+      reply,
       intent:         interpretation.microIntent,
       sentiment:      interpretation.emotionalTone,
       confidence:     phase2.confidence,
       nextAction:     strategy.nextAction,
       shouldHandoff:  phase2.shouldHandoff,
       reasoning:      interpretation.implicitMeaning,
-      // Full debug data for simulator UI
+      scores,
+      state: currentState,
       interpretation,
       strategy,
     });
   } catch (err) {
     console.error('[ROYA] /api/converse error:', err);
-    return NextResponse.json({ error: String(err) }, { status: 500 });
+    return NextResponse.json({
+      reply: 'Kurze technische Störung — ich bin gleich wieder da!',
+      error: String(err),
+    }, { status: 200 });
   }
 }
