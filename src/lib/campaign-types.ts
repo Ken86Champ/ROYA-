@@ -76,6 +76,7 @@ export interface AIFramework {
   systemPrompt: string;
   rules: string[];
   frameworkId?: string;       // references prompt_frameworks.id
+  referenceDoc?: string;      // uploaded style guide / chat template
 }
 
 export const DEFAULT_AI_FRAMEWORK: AIFramework = {

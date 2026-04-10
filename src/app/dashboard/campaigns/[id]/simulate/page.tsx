@@ -252,6 +252,11 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
         if (!c.id) throw new Error("Ungültige Kampagne");
         setCampaign(c);
         setLoading(false);
+        // Load saved reference doc from campaign
+        if (c.aiFramework?.referenceDoc) {
+          setReferenceDoc(c.aiFramework.referenceDoc);
+          setReferenceFileName("Gespeicherte Vorlage");
+        }
         // Load the campaign's prompt framework if linked
         if (c.aiFramework?.frameworkId) {
           fetch(`/api/frameworks/${c.aiFramework.frameworkId}`)
@@ -628,8 +633,17 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
             reader.onload = ev => {
               const text = ev.target?.result as string;
               if (text && text.length > 0) {
-                setReferenceDoc(text.slice(0, 15000));
+                const doc = text.slice(0, 15000);
+                setReferenceDoc(doc);
                 setReferenceFileName(file.name);
+                // Persist to campaign
+                if (campaign) {
+                  fetch(`/api/campaigns/${id}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ action: "update_framework", aiFramework: { ...campaign.aiFramework, referenceDoc: doc } }),
+                  }).catch(() => {});
+                }
               }
             };
             reader.readAsText(file, "UTF-8");
@@ -645,7 +659,18 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
               <div className="bg-slate-50 rounded-xl p-3 text-[11px] text-slate-500 max-h-24 overflow-y-auto whitespace-pre-wrap font-mono">{referenceDoc.slice(0, 500)}{referenceDoc.length > 500 ? "…" : ""}</div>
               <div className="flex gap-2">
                 <button onClick={() => refFileRef.current?.click()} className="flex-1 py-1.5 rounded-lg text-xs font-medium border border-slate-200 text-slate-500 bg-slate-50 hover:border-violet-300 transition-all">Ersetzen</button>
-                <button onClick={() => { setReferenceDoc(null); setReferenceFileName(null); }} className="flex-1 py-1.5 rounded-lg text-xs font-medium border border-red-200 text-red-500 bg-red-50 hover:border-red-300 transition-all">Entfernen</button>
+                <button onClick={() => {
+                  setReferenceDoc(null);
+                  setReferenceFileName(null);
+                  if (campaign) {
+                    const { referenceDoc: _removed, ...rest } = campaign.aiFramework || {};
+                    fetch(`/api/campaigns/${id}`, {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ action: "update_framework", aiFramework: { ...rest, referenceDoc: "" } }),
+                    }).catch(() => {});
+                  }
+                }} className="flex-1 py-1.5 rounded-lg text-xs font-medium border border-red-200 text-red-500 bg-red-50 hover:border-red-300 transition-all">Entfernen</button>
               </div>
             </div>
           ) : (
