@@ -12,12 +12,21 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import fs from 'fs';
+import path from 'path';
 
 function getTwilioCredentials() {
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const authToken  = process.env.TWILIO_AUTH_TOKEN;
-  const fromNumber = process.env.TWILIO_FROM_NUMBER;
-  return { accountSid, authToken, fromNumber };
+  // Read from settings file first, fall back to env vars
+  let settings: Record<string, string> = {};
+  try {
+    const file = path.join(process.cwd(), 'roya-settings.json');
+    if (fs.existsSync(file)) settings = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  } catch {}
+  const accountSid    = settings.twilioAccountSid || process.env.TWILIO_ACCOUNT_SID;
+  const authToken     = settings.twilioAuthToken  || process.env.TWILIO_AUTH_TOKEN;
+  const fromNumber    = settings.twilioFrom       || process.env.TWILIO_FROM_NUMBER;
+  const whatsappFrom  = settings.twilioWhatsappFrom || process.env.TWILIO_WHATSAPP_FROM;
+  return { accountSid, authToken, fromNumber, whatsappFrom };
 }
 
 function authHeader(accountSid: string, authToken: string) {
@@ -26,7 +35,7 @@ function authHeader(accountSid: string, authToken: string) {
 
 // GET — poll for new inbound messages from a contact
 export async function GET(req: NextRequest) {
-  const { accountSid, authToken, fromNumber } = getTwilioCredentials();
+  const { accountSid, authToken, fromNumber, whatsappFrom } = getTwilioCredentials();
   if (!accountSid || !authToken || !fromNumber) {
     return NextResponse.json({ error: 'Twilio nicht konfiguriert' }, { status: 400 });
   }
@@ -41,7 +50,8 @@ export async function GET(req: NextRequest) {
 
   try {
     // For WhatsApp, Twilio stores From/To with whatsapp: prefix
-    const fromField = channel === 'whatsapp' ? `whatsapp:${fromNumber}` : fromNumber;
+    const waNum = whatsappFrom || fromNumber;
+    const fromField = channel === 'whatsapp' ? `whatsapp:${waNum}` : fromNumber;
     const contactField = channel === 'whatsapp' ? `whatsapp:${contact}` : contact;
 
     // Fetch messages sent TO our number FROM the contact (inbound)

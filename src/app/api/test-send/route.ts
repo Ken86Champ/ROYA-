@@ -2,15 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(req: NextRequest) {
   try {
-    const { channel, to, body, accountSid: sidFromClient, authToken: tokenFromClient, from: fromFromClient } = await req.json();
+    const { channel, to, body, accountSid: sidFromClient, authToken: tokenFromClient, from: fromFromClient, whatsappFrom: waFromClient } = await req.json();
 
     // Prefer client-provided credentials (from Settings), fall back to environment variables
     const accountSid = sidFromClient || process.env.TWILIO_ACCOUNT_SID;
     const authToken  = tokenFromClient || process.env.TWILIO_AUTH_TOKEN;
-    const from       = fromFromClient  || process.env.TWILIO_FROM_NUMBER;
+    const smsFrom    = fromFromClient  || process.env.TWILIO_FROM_NUMBER;
+    const waFrom     = waFromClient    || process.env.TWILIO_WHATSAPP_FROM;
+    const from       = channel === "whatsapp" ? (waFrom || smsFrom) : smsFrom;
 
     if (!accountSid || !authToken || !from) {
-      return NextResponse.json({ error: "Twilio-Zugangsdaten fehlen. Bitte in den Einstellungen konfigurieren." }, { status: 400 });
+      return NextResponse.json({ error: channel === "whatsapp" && !waFrom
+        ? "WhatsApp Absender-Nummer fehlt. Bitte in den Einstellungen konfigurieren (z.B. +14155238886 für Sandbox)."
+        : "Twilio-Zugangsdaten fehlen. Bitte in den Einstellungen konfigurieren." }, { status: 400 });
     }
     if (!to || !body) {
       return NextResponse.json({ error: "Empfänger und Nachricht erforderlich." }, { status: 400 });

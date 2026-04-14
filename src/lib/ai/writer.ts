@@ -33,14 +33,8 @@ export async function writeAndCheck(
   if (strategy.nextAction === 'stop') {
     return { finalMessage: '', confidence: 100, shouldHandoff: false };
   }
-  if (strategy.nextAction === 'handoff') {
-    return {
-      finalMessage: '',
-      confidence: 0,
-      shouldHandoff: true,
-      handoffReason: strategy.primaryGoal,
-    };
-  }
+  // For handoff, still generate a human message (the agent should say something before handing off)
+  // Only skip if explicitly flagged as silent handoff
 
   try {
     const response = await client.messages.create({
@@ -71,7 +65,17 @@ export async function writeAndCheck(
       handoffReason: parsed.handoffReason || undefined,
     };
   } catch (err) {
+    const errStr = String(err);
     console.error('[ROYA] Writer failed:', err);
+    // Detect API credit/billing errors
+    if (errStr.includes('credit balance') || errStr.includes('billing') || errStr.includes('too low')) {
+      return {
+        finalMessage: '',
+        confidence: 0,
+        shouldHandoff: false,
+        handoffReason: 'API_CREDIT_ERROR',
+      };
+    }
     // Fallback: simple contextual response
     return {
       finalMessage: '',

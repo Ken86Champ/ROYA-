@@ -24,6 +24,7 @@ export async function GET() {
     twilioAccountSid:  settings.twilioAccountSid  || process.env.TWILIO_ACCOUNT_SID  || "",
     twilioAuthToken:   settings.twilioAuthToken   || process.env.TWILIO_AUTH_TOKEN   || "",
     twilioFrom:        settings.twilioFrom        || process.env.TWILIO_FROM_NUMBER   || "",
+    twilioWhatsappFrom: settings.twilioWhatsappFrom || process.env.TWILIO_WHATSAPP_FROM || "",
     claudeKey:         settings.claudeKey         || process.env.ANTHROPIC_API_KEY    || "",
     supabaseUrl:       settings.supabaseUrl       || process.env.NEXT_PUBLIC_SUPABASE_URL || "",
     supabaseKey:       settings.supabaseKey       || process.env.SUPABASE_SERVICE_ROLE_KEY || "",

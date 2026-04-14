@@ -303,7 +303,7 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
 
   const sendSms = async (text: string) => {
     if (!liveTestNumber.trim()) return;
-    let twilio = { accountSid: "", authToken: "", from: "" };
+    let twilio = { accountSid: "", authToken: "", from: "", whatsappFrom: "" };
     try { twilio = JSON.parse(localStorage.getItem("roya_twilio") || "{}"); } catch {}
     try {
       await fetch("/api/test-send", {
@@ -343,7 +343,15 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
         const data = await res.json();
 
         const newMsgs = (data.messages || []).filter(
-          (m: { sid: string }) => !processedSidsRef.current.has(m.sid)
+          (m: { sid: string; body: string }) => {
+            if (processedSidsRef.current.has(m.sid)) return false;
+            // Filter out WhatsApp Sandbox auto-replies
+            const lower = m.body.toLowerCase();
+            if (lower.startsWith('you said')) return false;
+            if (lower.includes('configure your whatsapp')) return false;
+            if (lower.includes('sandbox')) return false;
+            return true;
+          }
         );
 
         if (newMsgs.length === 0) { isPollingRef.current = false; return; }
@@ -397,6 +405,7 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
           });
           const aiData = await aiRes.json();
           const reply = aiData.reply || "";
+          const isError = aiData.error === 'API_CREDIT_ERROR' || reply.includes('⚠');
 
           syncTyping(false);
           if (reply) {
@@ -404,8 +413,10 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
             addMsg("agent", reply, followupIdx >= 0 ? followupIdx : 1);
             const updatedHistory = [...newHistory, { role: "agent" as const, body: reply }];
             syncHistory(updatedHistory);
-            // Send the AI reply back via SMS
-            await sendSms(reply);
+            // Send the AI reply back via SMS/WhatsApp — but NOT error messages
+            if (!isError) {
+              await sendSms(reply);
+            }
           }
         } catch (err) {
           console.error("[ROYA] Poll AI error:", err);
@@ -596,7 +607,7 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
     setLiveTestSending(true);
     setLiveTestResult(null);
     lastPollTimeRef.current = new Date().toISOString();
-    let twilio = { accountSid: "", authToken: "", from: "" };
+    let twilio = { accountSid: "", authToken: "", from: "", whatsappFrom: "" };
     try { twilio = JSON.parse(localStorage.getItem("roya_twilio") || "{}"); } catch {}
     try {
       const res = await fetch("/api/test-send", {

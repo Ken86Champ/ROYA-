@@ -69,6 +69,7 @@ export interface TwilioConfig {
   accountSid: string;
   authToken: string;
   from: string;
+  whatsappFrom?: string;
 }
 
 function loadTwilio(): TwilioConfig {
@@ -114,7 +115,7 @@ export default function SettingsPage() {
     setConnected(loadCalendars());
     // Load from server-persisted settings (falls back to env vars)
     fetch("/api/settings").then(r => r.json()).then(s => {
-      setTwilio({ accountSid: s.twilioAccountSid || "", authToken: s.twilioAuthToken || "", from: s.twilioFrom || "" });
+      setTwilio({ accountSid: s.twilioAccountSid || "", authToken: s.twilioAuthToken || "", from: s.twilioFrom || "", whatsappFrom: s.twilioWhatsappFrom || "" });
       setClaudeKey(s.claudeKey || "");
       setSupabaseUrl(s.supabaseUrl || "");
       setSupabaseKey(s.supabaseKey || "");
@@ -123,7 +124,7 @@ export default function SettingsPage() {
       setMailgunFrom(s.mailgunFrom || "");
       // Also sync to localStorage for other pages that still read from it
       try {
-        if (s.twilioAccountSid) localStorage.setItem("roya_twilio", JSON.stringify({ accountSid: s.twilioAccountSid, authToken: s.twilioAuthToken, from: s.twilioFrom }));
+        if (s.twilioAccountSid) localStorage.setItem("roya_twilio", JSON.stringify({ accountSid: s.twilioAccountSid, authToken: s.twilioAuthToken, from: s.twilioFrom, whatsappFrom: s.twilioWhatsappFrom || "" }));
         if (s.claudeKey) localStorage.setItem("roya_claude_key", s.claudeKey);
         if (s.mailgunKey) localStorage.setItem("roya_mailgun_key", s.mailgunKey);
         if (s.mailgunDomain) localStorage.setItem("roya_mailgun_domain", s.mailgunDomain);
@@ -186,6 +187,7 @@ export default function SettingsPage() {
       twilioAccountSid: twilio.accountSid,
       twilioAuthToken:  twilio.authToken,
       twilioFrom:       twilio.from,
+      twilioWhatsappFrom: twilio.whatsappFrom || "",
       claudeKey,
       supabaseUrl,
       supabaseKey,
@@ -329,10 +331,15 @@ export default function SettingsPage() {
                   onChange={e => setTwilio(t => ({ ...t, authToken: e.target.value }))} className={inp} />
               </div>
               <div>
-                <label className="text-xs text-slate-500 block mb-1.5">Absender-Nummer</label>
-                <input type="text" placeholder="+41 XX XXX XX XX" value={twilio.from}
+                <label className="text-xs text-slate-500 block mb-1.5">SMS Absender-Nummer</label>
+                <input type="text" placeholder="+1 260 529 7326" value={twilio.from}
                   onChange={e => setTwilio(t => ({ ...t, from: e.target.value }))} className={inp} />
-                <p className="text-[10px] text-slate-400 mt-1">Für WhatsApp: Die Nummer muss im Twilio WhatsApp Sandbox oder Business Account freigeschaltet sein.</p>
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1.5">WhatsApp Absender-Nummer</label>
+                <input type="text" placeholder="+14155238886 (Sandbox)" value={twilio.whatsappFrom || ""}
+                  onChange={e => setTwilio(t => ({ ...t, whatsappFrom: e.target.value }))} className={inp} />
+                <p className="text-[10px] text-slate-400 mt-1">Twilio Sandbox: +14155238886. Eigene Nummer nur mit genehmigtem WhatsApp Business Sender.</p>
               </div>
             </div>
           </div>

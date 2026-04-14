@@ -9,6 +9,7 @@ import { interpretMessage } from '@/lib/ai/interpreter';
 import { decideStrategy } from '@/lib/ai/strategist';
 import { writeAndCheck } from '@/lib/ai/writer';
 import { DEFAULT_PERSONA } from '@/lib/types/conversation';
+import { SYSTEM_FRAMEWORKS } from '@/lib/framework-store';
 import type {
   ConversationContext,
   HistoryMessage,
@@ -132,8 +133,19 @@ export async function POST(req: NextRequest) {
 
     const persona = business || DEFAULT_PERSONA;
 
-    // ── Build framework options from dedicated framework field or business.rules/systemPrompt ──
-    const fw = framework ?? {};
+    // ── Build framework options from dedicated framework field or ROYA Standard fallback ──
+    const royaStandard = SYSTEM_FRAMEWORKS[0]; // ROYA Standard is always first
+    const fw = framework && framework.writerInstructions
+      ? framework
+      : {
+          writerInstructions: royaStandard.writerInstructions,
+          strategistInstructions: royaStandard.strategistInstructions,
+          interpreterInstructions: royaStandard.interpreterInstructions,
+          rules: royaStandard.rules,
+          forbiddenPhrases: royaStandard.forbiddenPhrases,
+          temperature: royaStandard.temperature,
+          exampleMessages: royaStandard.exampleMessages,
+        };
     const bizAny = business as unknown as Record<string, unknown> | undefined;
     const rules = fw.rules ?? (bizAny?.rules as string[] | undefined) ?? [];
     const forbiddenPhrases = fw.forbiddenPhrases ?? [];
@@ -196,10 +208,14 @@ export async function POST(req: NextRequest) {
 
     // Ensure we always have a reply
     let reply = phase2.finalMessage || '';
-    if (!reply && phase2.shouldHandoff) {
-      reply = `Ich leite das gerne intern weiter — jemand aus dem Team meldet sich bei dir!`;
+    if (!reply && phase2.handoffReason === 'API_CREDIT_ERROR') {
+      return NextResponse.json({
+        reply: '⚠ Anthropic API Credits aufgebraucht — bitte unter console.anthropic.com aufladen.',
+        error: 'API_CREDIT_ERROR',
+      }, { status: 200 });
     }
     if (!reply) {
+      console.warn('[ROYA] Writer returned empty — using fallback generation');
       reply = `Danke für deine Nachricht! Lass mich da kurz schauen und melde mich gleich.`;
     }
 
