@@ -85,6 +85,7 @@ export async function writeAndCheck(
 // ── Post-generation validation ─────────────────────────────────────────────────
 
 const EMOJI_REGEX = /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{FE00}-\u{FE0F}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{200D}\u{20E3}]/gu;
+const TEXT_SMILEY_REGEX = /\s*[:;][-']?[)(DPp|/\\]\s*/g;
 
 function validateResponse(message: string, framework?: WriterFrameworkOptions): string {
   if (!message) return message;
@@ -92,9 +93,9 @@ function validateResponse(message: string, framework?: WriterFrameworkOptions): 
   const rules = framework?.rules ?? [];
   const forbidden = framework?.forbiddenPhrases ?? [];
 
-  // Rule: no_emoji — strip emoji characters
+  // Rule: no_emoji — strip emoji characters AND text smileys like :) ;) :D
   if (rules.includes('no_emoji')) {
-    result = result.replace(EMOJI_REGEX, '').replace(/\s{2,}/g, ' ').trim();
+    result = result.replace(EMOJI_REGEX, '').replace(TEXT_SMILEY_REGEX, ' ').replace(/\s{2,}/g, ' ').trim();
   }
 
   // Rule: no_dashes — strip em-dashes, en-dashes, and isolated hyphens used as dashes
@@ -111,9 +112,11 @@ function validateResponse(message: string, framework?: WriterFrameworkOptions): 
   }
 
   // Rule: end_with_question — append soft question if missing
+  // BUT NOT on close/booking confirmations, rejections, or goodbyes
   if (rules.includes('end_with_question') && !result.includes('?')) {
-    // Don't append if message is very short or an acknowledgment
-    if (result.length > 10) {
+    const isClose = /\b(trage dich|eingetragen|rufe dich|melde mich|bis\s+(Montag|Dienstag|Mittwoch|Donnerstag|Freitag|Samstag|Sonntag|dann)|steht\.?)\b/i.test(result);
+    const isGoodbye = /\b(alles gute|viel erfolg|melde dich|tsch[uü]ss|ciao|bye)\b/i.test(result);
+    if (!isClose && !isGoodbye && result.length > 10) {
       result = result.replace(/[.!]?\s*$/, '') + ', was meinst du?';
     }
   }

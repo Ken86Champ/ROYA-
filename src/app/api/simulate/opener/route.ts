@@ -49,7 +49,13 @@ Antworte NUR mit gültigem JSON, kein Markdown:
     const text = ((response.content[0] as { text: string }).text || "").trim();
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) throw new Error("No JSON");
-    const { opener } = JSON.parse(match[0]);
+    let { opener } = JSON.parse(match[0]);
+    // Safety: ensure the opener uses the correct lead name (first name)
+    const firstName = leadName.split(" ")[0];
+    if (opener && !opener.includes(firstName)) {
+      // AI hallucinated a wrong name — replace the first word after Hey/Hallo/Hi with the correct name
+      opener = opener.replace(/(Hey|Hallo|Hi|Hoi)\s+\S+/i, `$1 ${firstName}`);
+    }
     return NextResponse.json({ opener });
   } catch {
     return NextResponse.json({

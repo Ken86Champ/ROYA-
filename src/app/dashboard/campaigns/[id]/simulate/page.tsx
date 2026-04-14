@@ -237,6 +237,14 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
   const [liveTestChannel, setLiveTestChannel] = useState<"sms" | "whatsapp">("sms");
   const [liveTestSending, setLiveTestSending] = useState(false);
   const [liveTestResult, setLiveTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [liveMode, setLiveMode] = useState(false);
+  const [livePolling, setLivePolling] = useState(false);
+  const processedSidsRef = useRef<Set<string>>(new Set());
+  const lastPollTimeRef = useRef<string | null>(null);
+  const liveModeRef = useRef(false);
+  const isPollingRef = useRef(false);
+  const historyRef = useRef<{ role: "lead" | "agent"; body: string }[]>([]);
+  const typingRef = useRef(false);
   const [activeFramework, setActiveFramework] = useState<PromptFramework | null>(null);
   const [referenceDoc, setReferenceDoc] = useState<string | null>(null);
   const [referenceFileName, setReferenceFileName] = useState<string | null>(null);
@@ -274,59 +282,205 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
     return msg;
   };
 
+  // Keep refs in sync with state so the polling interval always reads fresh values
+  const syncHistory = (h: { role: "lead" | "agent"; body: string }[]) => {
+    historyRef.current = h;
+    setHistory(h);
+  };
+  const syncTyping = (v: boolean) => {
+    typingRef.current = v;
+    setTyping(v);
+  };
+
+  // ── Live SMS helpers ──────────────────────────────────────────────────────
+  const normalizePhone = (num: string) => {
+    const digits = num.replace(/\s/g, "");
+    if (digits.startsWith("+")) return digits;
+    if (digits.startsWith("00")) return "+" + digits.slice(2);
+    if (digits.startsWith("0")) return "+41" + digits.slice(1);
+    return digits;
+  };
+
+  const sendSms = async (text: string) => {
+    if (!liveTestNumber.trim()) return;
+    let twilio = { accountSid: "", authToken: "", from: "" };
+    try { twilio = JSON.parse(localStorage.getItem("roya_twilio") || "{}"); } catch {}
+    try {
+      await fetch("/api/test-send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channel: liveTestChannel, to: liveTestNumber.trim(), body: text, ...twilio }),
+      });
+    } catch (err) {
+      console.error("[ROYA] SMS send error:", err);
+    }
+  };
+
+  // ── Live SMS Polling ──────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!liveMode || !liveTestNumber.trim()) {
+      liveModeRef.current = false;
+      setLivePolling(false);
+      return;
+    }
+
+    liveModeRef.current = true;
+    setLivePolling(true);
+
+    const interval = setInterval(async () => {
+      // Guard: skip if not active, already processing, or AI is typing
+      if (!liveModeRef.current || isPollingRef.current || typingRef.current) return;
+      isPollingRef.current = true;
+
+      const contact = normalizePhone(liveTestNumber);
+
+      try {
+        const params = new URLSearchParams({ contact, channel: liveTestChannel });
+        if (lastPollTimeRef.current) params.set("since", lastPollTimeRef.current);
+
+        const res = await fetch(`/api/twilio-poll?${params}`);
+        if (!res.ok) { isPollingRef.current = false; return; }
+        const data = await res.json();
+
+        const newMsgs = (data.messages || []).filter(
+          (m: { sid: string }) => !processedSidsRef.current.has(m.sid)
+        );
+
+        if (newMsgs.length === 0) { isPollingRef.current = false; return; }
+
+        // Process only the FIRST new message, then let next tick handle more
+        const msg = newMsgs[0];
+        processedSidsRef.current.add(msg.sid);
+        lastPollTimeRef.current = msg.dateSent;
+
+        // Add lead message to chat
+        addMsg("lead", msg.body);
+        const newHistory = [...historyRef.current, { role: "lead" as const, body: msg.body }];
+        syncHistory(newHistory);
+        syncTyping(true);
+
+        // Process through AI
+        try {
+          const bc = campaign?.businessContext;
+          const fw = campaign?.aiFramework;
+          const aiRes = await fetch("/api/converse", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              leadName: selectedContact?.name || "Lead",
+              message: msg.body,
+              history: newHistory,
+              business: {
+                agentName: fw?.agentName || "Lena",
+                companyName: bc?.companyName || campaign?.name || "",
+                offer: bc?.offer || campaign?.name || "",
+                goal: bc?.cta || "Reaktivierungsgespräch starten",
+                tone: fw?.tone || "Warm, direkt und menschlich",
+                language: fw?.language || "de",
+                ...bc,
+                rules: fw?.rules ?? [],
+                systemPrompt: fw?.systemPrompt || "",
+              },
+              ...(activeFramework ? {
+                framework: {
+                  writerInstructions: activeFramework.writerInstructions,
+                  strategistInstructions: activeFramework.strategistInstructions,
+                  interpreterInstructions: activeFramework.interpreterInstructions,
+                  rules: activeFramework.rules,
+                  forbiddenPhrases: activeFramework.forbiddenPhrases,
+                  temperature: activeFramework.temperature,
+                  exampleMessages: activeFramework.exampleMessages,
+                },
+              } : {}),
+              ...(referenceDoc ? { referenceDoc } : {}),
+            }),
+          });
+          const aiData = await aiRes.json();
+          const reply = aiData.reply || "";
+
+          syncTyping(false);
+          if (reply) {
+            const followupIdx = (campaign?.flow ?? []).findIndex(s => s.type === "followup");
+            addMsg("agent", reply, followupIdx >= 0 ? followupIdx : 1);
+            const updatedHistory = [...newHistory, { role: "agent" as const, body: reply }];
+            syncHistory(updatedHistory);
+            // Send the AI reply back via SMS
+            await sendSms(reply);
+          }
+        } catch (err) {
+          console.error("[ROYA] Poll AI error:", err);
+          syncTyping(false);
+        }
+      } catch (err) {
+        console.error("[ROYA] Poll error:", err);
+      } finally {
+        isPollingRef.current = false;
+      }
+    }, 3000);
+
+    return () => {
+      liveModeRef.current = false;
+      setLivePolling(false);
+      clearInterval(interval);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveMode, liveTestNumber]);
+
   const selectContact = async (contact: CampaignContact) => {
     if (!campaign) return;
     setSelectedContact(contact);
     setMessages([]);
-    setHistory([]);
+    syncHistory([]);
     setInput("");
     setEditingMsg(null);
     setSimDone(false);
-    setTyping(true);
+    syncTyping(true);
+    // Reset polling state for new contact
+    processedSidsRef.current = new Set();
+    lastPollTimeRef.current = null;
+    isPollingRef.current = false;
 
     const opener = (campaign.flow ?? []).find(s => s.type === "opener");
     const openerIdx = (campaign.flow ?? []).findIndex(s => s.type === "opener");
 
     try {
-      // Use saved template if set, otherwise generate
-      let text = opener?.messageTemplate || "";
-      if (!text) {
-        const fw = campaign.aiFramework ?? {};
-        const bc = campaign.businessContext ?? {};
-        const res = await fetch("/api/simulate/opener", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            leadName: contact.name,
-            agentName: fw.agentName || "Lena",
-            companyName: bc.companyName || campaign.name,
-            offer: bc.offer || campaign.name,
-            goal: bc.cta || "Reaktivierungsgespräch starten",
-            valueProp: bc.valueProp || "",
-            painPoint: bc.painPoint || "",
-            cta: bc.cta || "",
-            specialOffer: bc.specialOffer || "",
-            leadRelationship: bc.leadRelationship || "",
-            urgency: bc.urgency || "",
-            insiderKnowledge: bc.insiderKnowledge || "",
-            doNotSay: bc.doNotSay || "",
-            tone: fw.tone || "Warm, direkt und menschlich",
-            language: fw.language || "de",
-            rules: fw.rules ?? [],
-            systemPrompt: fw.systemPrompt || "",
-          }),
-        });
-        const data = await res.json();
-        text = data.opener || `Hallo ${contact.name}, kurze Frage — ist das Thema ${campaign.name} noch aktuell für dich?`;
-      }
-      setTyping(false);
+      // Always generate opener via API to ensure correct lead name
+      let text = "";
+      const fw = campaign.aiFramework ?? {};
+      const bc = campaign.businessContext ?? {};
+      const res = await fetch("/api/simulate/opener", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          leadName: contact.name,
+          agentName: fw.agentName || "Lena",
+          companyName: bc.companyName || campaign.name,
+          offer: bc.offer || campaign.name,
+          goal: bc.cta || "Reaktivierungsgespräch starten",
+          valueProp: bc.valueProp || "",
+          painPoint: bc.painPoint || "",
+          cta: bc.cta || "",
+          specialOffer: bc.specialOffer || "",
+          leadRelationship: bc.leadRelationship || "",
+          urgency: bc.urgency || "",
+          insiderKnowledge: bc.insiderKnowledge || "",
+          doNotSay: bc.doNotSay || "",
+          tone: fw.tone || "Warm, direkt und menschlich",
+          language: fw.language || "de",
+          rules: fw.rules ?? [],
+          systemPrompt: fw.systemPrompt || "",
+        }),
+      });
+      const data = await res.json();
+      text = data.opener || `Hallo ${contact.name}, ist das Thema ${campaign.name} noch aktuell für dich?`;
+      syncTyping(false);
       addMsg("agent", text, openerIdx >= 0 ? openerIdx : 0);
-      setHistory([{ role: "agent", body: text }]);
+      syncHistory([{ role: "agent", body: text }]);
     } catch {
-      setTyping(false);
-      const fallback = `Hallo ${contact.name}, kurze Frage — ist das Thema ${campaign.name} noch aktuell für dich?`;
+      syncTyping(false);
+      const fallback = `Hallo ${contact.name}, ist das Thema ${campaign.name} noch aktuell für dich?`;
       addMsg("agent", fallback, openerIdx >= 0 ? openerIdx : 0);
-      setHistory([{ role: "agent", body: fallback }]);
+      syncHistory([{ role: "agent", body: fallback }]);
     }
   };
 
@@ -335,9 +489,9 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
     if (!text || typing || !campaign || !selectedContact) return;
     setInput("");
     addMsg("lead", text);
-    const newHistory = [...history, { role: "lead" as const, body: text }];
-    setHistory(newHistory);
-    setTyping(true);
+    const newHistory = [...historyRef.current, { role: "lead" as const, body: text }];
+    syncHistory(newHistory);
+    syncTyping(true);
 
     try {
       const res = await fetch("/api/converse", {
@@ -394,16 +548,16 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
         }),
       });
       const data = await res.json();
-      setTyping(false);
+      syncTyping(false);
       const reply = data.reply || data.error || "⚠ Keine Antwort erhalten.";
       const followupIdx = (campaign.flow ?? []).findIndex(s => s.type === "followup");
       addMsg("agent", reply, followupIdx >= 0 ? followupIdx : 1);
-      setHistory(h => [...h, { role: "agent", body: reply }]);
+      syncHistory([...historyRef.current, { role: "agent", body: reply }]);
     } catch {
-      setTyping(false);
+      syncTyping(false);
       const fallback = "⚠ Verbindungsfehler — bitte nochmal versuchen.";
       addMsg("agent", fallback);
-      setHistory(h => [...h, { role: "agent", body: fallback }]);
+      syncHistory([...historyRef.current, { role: "agent", body: fallback }]);
     }
   };
 
@@ -412,8 +566,13 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
     setSavingEdit(true);
 
     const flowStepIdx = editingMsg.flowStepIdx ?? 0;
+    // Replace the current contact's first name with {name} placeholder so templates work across leads
+    const contactFirstName = selectedContact?.name.split(" ")[0] || "";
+    const templateText = contactFirstName
+      ? newText.replace(new RegExp(`\\b${contactFirstName}\\b`, "gi"), "{name}")
+      : newText;
     const updatedFlow: FlowStep[] = (campaign.flow ?? []).map((s, i) =>
-      i === flowStepIdx ? { ...s, messageTemplate: newText } : s
+      i === flowStepIdx ? { ...s, messageTemplate: templateText } : s
     );
 
     try {
@@ -424,7 +583,7 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
       });
       setCampaign(c => c ? { ...c, flow: updatedFlow } : c);
       setMessages(prev => prev.map(m => m.id === editingMsg.id ? { ...m, text: newText } : m));
-      setHistory(h => h.map(m => m.body === editingMsg.text ? { ...m, body: newText } : m));
+      syncHistory(historyRef.current.map(m => m.body === editingMsg.text ? { ...m, body: newText } : m));
       setSavedSteps(s => new Set([...s, flowStepIdx]));
       setEditingMsg(null);
     } catch {}
@@ -436,6 +595,7 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
     if (!agentMsg || !liveTestNumber.trim()) return;
     setLiveTestSending(true);
     setLiveTestResult(null);
+    lastPollTimeRef.current = new Date().toISOString();
     let twilio = { accountSid: "", authToken: "", from: "" };
     try { twilio = JSON.parse(localStorage.getItem("roya_twilio") || "{}"); } catch {}
     try {
@@ -445,7 +605,13 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
         body: JSON.stringify({ channel: liveTestChannel, to: liveTestNumber.trim(), body: agentMsg.text, ...twilio }),
       });
       const data = await res.json();
-      setLiveTestResult(res.ok ? { ok: true, msg: "Gesendet ✓" } : { ok: false, msg: data.error || "Fehler beim Senden" });
+      if (res.ok) {
+        setLiveTestResult({ ok: true, msg: "Gesendet ✓" });
+        // Auto-enable live mode after first send
+        if (!liveMode) setLiveMode(true);
+      } else {
+        setLiveTestResult({ ok: false, msg: data.error || "Fehler beim Senden" });
+      }
     } catch {
       setLiveTestResult({ ok: false, msg: "Netzwerkfehler" });
     }
@@ -685,8 +851,8 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
         {messages.some(m => m.role === "agent") && (
           <div className="w-[340px] bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-3">
             <div>
-              <h3 className="text-sm font-semibold text-slate-800">Live Test senden</h3>
-              <p className="text-xs text-slate-400 mt-0.5">Schickt die letzte KI-Nachricht direkt ans Handy</p>
+              <h3 className="text-sm font-semibold text-slate-800">Live SMS Test</h3>
+              <p className="text-xs text-slate-400 mt-0.5">Sendet die Opener-SMS und antwortet automatisch auf Antworten</p>
             </div>
             <div className="flex gap-2">
               {(["sms", "whatsapp"] as const).map(ch => (
@@ -694,7 +860,7 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
                   className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-all ${
                     liveTestChannel === ch ? "bg-violet-600 border-violet-600 text-white" : "border-slate-200 text-slate-500 bg-slate-50 hover:border-violet-300"
                   }`}>
-                  {ch === "sms" ? "💬 SMS" : "💚 WhatsApp"}
+                  {ch === "sms" ? "SMS" : "WhatsApp"}
                 </button>
               ))}
             </div>
@@ -713,9 +879,32 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
               className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-white text-sm font-semibold rounded-xl disabled:opacity-40 transition-all flex items-center justify-center gap-2">
               {liveTestSending ? (
                 <><span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />Wird gesendet…</>
-              ) : "Testnachricht senden →"}
+              ) : "Opener senden und Live-Modus starten"}
             </button>
-            <p className="text-[10px] text-slate-400 text-center">Twilio-Zugangsdaten in den Einstellungen konfigurieren</p>
+
+            {/* Live mode status */}
+            {liveMode && (
+              <div className={`flex items-center justify-between px-3 py-2.5 rounded-xl border ${livePolling ? "bg-green-50 border-green-200" : "bg-slate-50 border-slate-200"}`}>
+                <div className="flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-full ${livePolling ? "bg-green-500 animate-pulse" : "bg-slate-400"}`} />
+                  <span className="text-xs font-medium text-slate-700">
+                    {livePolling ? "Wartet auf SMS-Antwort..." : "Live-Modus inaktiv"}
+                  </span>
+                </div>
+                <button
+                  onClick={() => { setLiveMode(false); liveModeRef.current = false; }}
+                  className="text-[10px] text-red-500 hover:text-red-700 font-medium"
+                >
+                  Stoppen
+                </button>
+              </div>
+            )}
+
+            <p className="text-[10px] text-slate-400 text-center">
+              {liveMode
+                ? "KI antwortet automatisch auf eingehende SMS"
+                : "Klick sendet den Opener und aktiviert automatische Antworten"}
+            </p>
           </div>
         )}
 

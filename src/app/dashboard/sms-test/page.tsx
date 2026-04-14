@@ -152,6 +152,10 @@ export default function SmsTestPage() {
   const [selectedMsg, setSelectedMsg] = useState<Message | null>(null);
   const [sendLive, setSendLive] = useState(false);
   const [liveNumber, setLiveNumber] = useState("");
+  const [polling, setPolling] = useState(false);
+  const [lastPollTime, setLastPollTime] = useState<string | null>(null);
+  const [processedSids, setProcessedSids] = useState<Set<string>>(new Set());
+  const pollingRef = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -159,9 +163,113 @@ export default function SmsTestPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // ── Twilio Polling for live SMS replies ──────────────────────────────────
+  useEffect(() => {
+    if (!sendLive || !liveNumber) {
+      pollingRef.current = false;
+      setPolling(false);
+      return;
+    }
+
+    pollingRef.current = true;
+    setPolling(true);
+
+    const normalizePhone = (num: string) => {
+      const digits = num.replace(/\s/g, "");
+      if (digits.startsWith("+")) return digits;
+      if (digits.startsWith("00")) return "+" + digits.slice(2);
+      if (digits.startsWith("0")) return "+41" + digits.slice(1);
+      return digits;
+    };
+
+    const interval = setInterval(async () => {
+      if (!pollingRef.current || loading) return;
+      const contact = normalizePhone(liveNumber);
+
+      try {
+        const params = new URLSearchParams({ contact });
+        if (lastPollTime) params.set("since", lastPollTime);
+
+        const res = await fetch(`/api/twilio-poll?${params}`);
+        if (!res.ok) return;
+        const data = await res.json();
+
+        const newMessages = (data.messages || []).filter(
+          (m: { sid: string }) => !processedSids.has(m.sid)
+        );
+
+        for (const msg of newMessages) {
+          // Mark as processed
+          setProcessedSids(prev => new Set([...prev, msg.sid]));
+          setLastPollTime(msg.dateSent);
+
+          // Add lead message to chat
+          const leadMsg: Message = {
+            id: crypto.randomUUID(),
+            role: "lead",
+            body: msg.body,
+            timestamp: new Date(msg.dateSent),
+          };
+          setMessages(prev => [...prev, leadMsg]);
+          setLoading(true);
+
+          // Process through AI and send reply
+          try {
+            const history = [...messages, leadMsg].map(m => ({ role: m.role, body: m.body }));
+            const aiRes = await fetch("/api/twilio-poll", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                contact,
+                message: msg.body,
+                leadName,
+                history,
+                business: config,
+              }),
+            });
+            const aiData = await aiRes.json();
+
+            if (aiData.reply) {
+              const agentMsg: Message = {
+                id: crypto.randomUUID(),
+                role: "agent",
+                body: aiData.reply,
+                timestamp: new Date(),
+                meta: {
+                  intent: aiData.intent,
+                  sentiment: aiData.sentiment,
+                  confidence: aiData.confidence,
+                  nextAction: aiData.nextAction,
+                  reasoning: aiData.reasoning,
+                },
+              };
+              setMessages(prev => [...prev, agentMsg]);
+              setSelectedMsg(agentMsg);
+            }
+          } catch (err) {
+            console.error("[ROYA] Poll reply error:", err);
+          } finally {
+            setLoading(false);
+          }
+        }
+      } catch (err) {
+        console.error("[ROYA] Poll error:", err);
+      }
+    }, 3000);
+
+    return () => {
+      pollingRef.current = false;
+      setPolling(false);
+      clearInterval(interval);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sendLive, liveNumber]);
+
   const resetChat = useCallback(() => {
     setMessages([]);
     setSelectedMsg(null);
+    setProcessedSids(new Set());
+    setLastPollTime(null);
   }, []);
 
   const startScenario = useCallback((scenario: Scenario) => {
@@ -228,6 +336,8 @@ export default function SmsTestPage() {
 
       // Optionally send live SMS
       if (sendLive && liveNumber) {
+        // Set poll timestamp to now so we only pick up replies after this message
+        setLastPollTime(new Date().toISOString());
         await fetch("/api/test-send", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -331,9 +441,13 @@ export default function SmsTestPage() {
                 Chat leeren
               </button>
             )}
-            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-violet-700 bg-violet-50 border border-violet-200 px-2.5 py-1 rounded-full">
-              <span className="w-1.5 h-1.5 rounded-full bg-violet-500" />
-              Simulator — kein Live-SMS
+            <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full ${
+              polling
+                ? "text-green-700 bg-green-50 border border-green-200"
+                : "text-violet-700 bg-violet-50 border border-violet-200"
+            }`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${polling ? "bg-green-500 animate-pulse" : "bg-violet-500"}`} />
+              {polling ? "Live SMS aktiv" : "Simulator"}
             </span>
           </div>
         </div>
@@ -417,19 +531,27 @@ export default function SmsTestPage() {
             <label className="flex items-center gap-2 text-xs text-slate-500 cursor-pointer select-none">
               <div
                 onClick={() => setSendLive(v => !v)}
-                className={`relative w-8 h-4 rounded-full transition-colors cursor-pointer ${sendLive ? "bg-violet-500" : "bg-slate-200"}`}
+                className={`relative w-8 h-4 rounded-full transition-colors cursor-pointer ${sendLive ? "bg-green-500" : "bg-slate-200"}`}
               >
                 <span className={`absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform ${sendLive ? "translate-x-4" : ""}`} />
               </div>
-              Auch als echte SMS senden
+              Live SMS (senden + automatisch antworten)
             </label>
             {sendLive && (
-              <input
-                value={liveNumber}
-                onChange={e => setLiveNumber(e.target.value)}
-                placeholder="+41786215258"
-                className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 w-36 outline-none focus:border-violet-400"
-              />
+              <>
+                <input
+                  value={liveNumber}
+                  onChange={e => setLiveNumber(e.target.value)}
+                  placeholder="+41786215258"
+                  className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 w-36 outline-none focus:border-green-400"
+                />
+                {polling && (
+                  <span className="text-[10px] text-green-600 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                    Wartet auf Antwort...
+                  </span>
+                )}
+              </>
             )}
           </div>
 
