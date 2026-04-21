@@ -36,7 +36,7 @@ Ziel: ${persona.goal}`;
   }
   if (persona.doNotSay) prompt += `\n\nTABU: ${persona.doNotSay}`;
 
-  // ── Framework-specific strategy instructions (override defaults if provided) ──
+  // ── Framework-specific strategy instructions (evolved framework or ROYA Standard — already unified) ──
   if (framework?.strategistInstructions) {
     prompt += `\n\n${framework.strategistInstructions}`;
   } else {

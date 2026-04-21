@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as store from "@/lib/conversation-store";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  // If ?contact= query param is provided, find conversation by contact phone/email
+  const contact = req.nextUrl.searchParams.get("contact");
+  if (contact) {
+    const conv = await store.findByContact(contact);
+    if (!conv) return NextResponse.json({ messages: [] });
+    return NextResponse.json(conv);
+  }
   return NextResponse.json(await store.getAll());
 }
 

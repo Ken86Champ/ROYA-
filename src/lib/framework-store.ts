@@ -295,7 +295,7 @@ WARNUNG: Keine Zusatzinfos, kein Overhead, keine Begeisterung, kein "Schönen Ta
 EINWAND-STRATEGIEN:
 - "Kein Interesse": Respektieren. EINE Rückfrage erlaubt. Wenn nochmal nein → sofort sauber verabschieden. NICHT weiter bohren.
 - "Keine Zeit gerade": "Kein Problem. Wann wäre realistischer?" Nicht drücken.
-- "Was kostet das?": "Kommt drauf an was du brauchst. Was ist dein konkretes Ziel?" → Zurück zu Phase 2.
+- "Was kostet das?": "Erstmal gar nichts. Wir schauen uns in Ruhe an, ob und wie wir dir helfen können. Alles Weitere klären wir dann persönlich. Was ist dein konkretes Ziel?" → Zurück zu Phase 2.
 - "Muss ich drüber nachdenken": "Klar, kein Stress. Ich melde mich [Zeitpunkt] nochmal." → Follow-up planen.
 - Skepsis/Misstrauen: Verständnis zeigen. Nicht rechtfertigen. Problem spiegeln statt Lösung pitchen.
 
@@ -369,7 +369,7 @@ WARNSIGNALE:
       { context: "Phase 5 — Konkrete Slots anbieten", message: "Dann hab ich nächste Woche noch folgende Möglichkeiten: Dienstag 09:00, Mittwoch 10:30 oder Freitag 08:30. Welcher passt dir am besten?" },
       { context: "Phase 6 — Sauberer Abschluss", message: "Perfekt, ich trage dich für Dienstag um 9 ein. Ich rufe dich dann an." },
       { context: "Phase 6 — Lead verabschiedet sich", message: "Bis Donnerstag, Tanja." },
-      { context: "Lead fragt nach dem Preis", message: "Kommt drauf an was du brauchst. Was ist dein konkretes Ziel?" },
+      { context: "Lead fragt nach dem Preis", message: "Erstmal gar nichts. Wir schauen uns in Ruhe an, ob und wie wir dir helfen können. Alles Weitere klären wir dann persönlich. Was ist dein konkretes Ziel?" },
       { context: "Lead sagt keine Zeit", message: "Kein Stress. Wann wäre realistischer für dich?" },
       { context: "Lead sagt kein Interesse", message: "Alles gut. Darf ich kurz fragen was sich verändert hat?" },
       { context: "Lead sagt nochmal kein Interesse", message: "Verstanden, Tanja. Melde dich falls sich das ändert." },
@@ -464,7 +464,7 @@ Absolutverbote:
     temperature: 0.4,
     exampleMessages: [
       { context: "Lead antwortet positiv", message: "Super! Wann hättest du 15 Min für ein kurzes Gespräch?" },
-      { context: "Lead fragt was es kostet", message: "Kommt drauf an was du brauchst — in 15 Min kann ich dir was Konkretes sagen. Passt diese Woche?" },
+      { context: "Lead fragt was es kostet", message: "Erstmal gar nichts. Wir schauen uns in Ruhe an, ob und wie wir dir helfen können. Passt dir diese Woche für ein kurzes Gespräch?" },
       { context: "Lead ist unentschlossen", message: "Kein Stress. Was müsstest du wissen damit es für dich Sinn macht?" },
     ],
   },

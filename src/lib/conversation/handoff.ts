@@ -4,6 +4,7 @@
  */
 
 import { supabase } from '@/lib/supabase';
+import * as execLog from '@/lib/execution-log';
 import type { MessageInterpretation, StrategyDecision, ConversationContext } from '@/lib/types/conversation';
 
 export interface HandoffPayload {
@@ -53,7 +54,10 @@ export async function createHandoff(payload: HandoffPayload): Promise<void> {
     // Supabase may not be configured
   }
 
-  // 2. Slack notification (optional)
+  // 2. Pause campaign contact (prevent further automated outreach)
+  await pauseCampaignContact(payload.conversationId, payload.leadContact);
+
+  // 3. Slack notification (optional)
   const slackUrl = process.env.SLACK_WEBHOOK_URL;
   if (slackUrl) {
     const icon =
@@ -116,4 +120,51 @@ export async function maybeCreateHandoff(params: {
     interpretation:  params.interpretation,
     strategy:        params.strategy,
   });
+}
+
+// ── Handoff → pause campaign contact ─────────────────────────────────────────
+
+/**
+ * When a handoff happens, set the campaign_contact status to 'human_escalated'
+ * so the scheduler skips this contact until a human resolves it.
+ */
+async function pauseCampaignContact(conversationId: string, leadContact: string): Promise<void> {
+  try {
+    // Find the campaign_contact linked to this conversation
+    const { data: conv } = await supabase
+      .from('conversations')
+      .select('campaign_id')
+      .eq('id', conversationId)
+      .single();
+
+    if (!conv?.campaign_id) return;
+
+    // Find the contact by their address within this campaign
+    const { data: contacts } = await supabase
+      .from('campaign_contacts')
+      .select('id, name')
+      .eq('campaign_id', conv.campaign_id)
+      .eq('contact', leadContact);
+
+    if (!contacts?.length) return;
+
+    const contact = contacts[0];
+    await supabase
+      .from('campaign_contacts')
+      .update({ status: 'human_escalated' })
+      .eq('id', contact.id)
+      .eq('campaign_id', conv.campaign_id);
+
+    await execLog.log({
+      campaignId: conv.campaign_id,
+      contactId: contact.id,
+      contactName: contact.name,
+      event: 'handoff_pause',
+      details: { conversationId, leadContact, reason: 'handoff triggered' },
+    });
+
+    console.log(`[HANDOFF] Paused campaign contact ${contact.name} (${leadContact}) — human_escalated`);
+  } catch (err) {
+    console.error('[HANDOFF] pauseCampaignContact error:', err);
+  }
 }

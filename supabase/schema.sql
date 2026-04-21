@@ -169,3 +169,104 @@ create table if not exists handoff_events (
   message     text not null,
   notified_at timestamptz default now()
 );
+
+-- Style learnings (extracted from uploaded chat exports)
+create table if not exists style_learnings (
+  id                    text primary key,
+  agency_id             text,
+  source                text not null default '',
+  extracted_at          timestamptz default now(),
+  tone_profile          text default '',
+  sentence_style        text default '',
+  conversation_patterns jsonb default '[]',
+  phrases_to_use        jsonb default '[]',
+  phrases_to_avoid      jsonb default '[]',
+  rules                 jsonb default '[]',
+  example_messages      jsonb default '[]',
+  summary               text default '',
+  playbook              jsonb default '[]',
+  created_at            timestamptz default now()
+);
+
+create index if not exists sl_agency_id on style_learnings(agency_id);
+
+-- Evolved frameworks (merged ROYA Standard + learnings)
+create table if not exists evolved_frameworks (
+  id                       text primary key,
+  agency_id                text,
+  version                  integer not null default 1,
+  evolved_at               timestamptz default now(),
+  learnings_used           integer not null default 0,
+  writer_instructions      text default '',
+  strategist_instructions  text default '',
+  interpreter_instructions text default '',
+  rules                    text[] default '{}',
+  forbidden_phrases        text[] default '{}',
+  temperature              numeric default 0.3,
+  example_messages         jsonb default '[]',
+  evolution_log            jsonb default '[]',
+  created_at               timestamptz default now()
+);
+
+create index if not exists ef_agency_id on evolved_frameworks(agency_id);
+
+-- Conversation events (tracks framework usage + outcomes per turn)
+create table if not exists conversation_events (
+  id                 text primary key default gen_random_uuid()::text,
+  conversation_id    text not null,
+  channel            text not null default 'sms',
+  framework_version  integer not null default 0,
+  intent             text default '',
+  action             text default '',
+  confidence         integer default 0,
+  state              text default '',
+  created_at         timestamptz default now()
+);
+
+create index if not exists ce_conv_id on conversation_events(conversation_id);
+create index if not exists ce_fw_version on conversation_events(framework_version);
+create index if not exists ce_created_at on conversation_events(created_at);
+
+-- Conversation outcomes (final result of each conversation)
+create table if not exists conversation_outcomes (
+  id                 text primary key default gen_random_uuid()::text,
+  conversation_id    text not null,
+  outcome            text not null default 'unknown',
+  framework_version  integer not null default 0,
+  turns_count        integer not null default 0,
+  avg_confidence     integer not null default 0,
+  final_state        text not null default '',
+  channel            text not null default 'sms',
+  lead_name          text default '',
+  successful_angles  jsonb default '[]',
+  failed_angles      jsonb default '[]',
+  objections_seen    jsonb default '[]',
+  key_moments        jsonb default '[]',
+  outcome_at         timestamptz default now(),
+  created_at         timestamptz default now()
+);
+
+create index if not exists co_conv_id on conversation_outcomes(conversation_id);
+create index if not exists co_outcome on conversation_outcomes(outcome);
+create index if not exists co_fw_version on conversation_outcomes(framework_version);
+create index if not exists co_created_at on conversation_outcomes(created_at);
+
+-- Auto-learnings (extracted by AI from conversations)
+create table if not exists auto_learnings (
+  id                 text primary key default gen_random_uuid()::text,
+  source_type        text not null default 'conversation',
+  source_id          text not null default '',
+  outcome            text not null default '',
+  framework_version  integer not null default 0,
+  insight_type       text not null default 'general',
+  insight            text not null default '',
+  confidence         integer not null default 0,
+  actionable_rule    text default '',
+  applied            boolean not null default false,
+  applied_at         timestamptz,
+  created_at         timestamptz default now()
+);
+
+create index if not exists al_source_id on auto_learnings(source_id);
+create index if not exists al_applied on auto_learnings(applied);
+create index if not exists al_created_at on auto_learnings(created_at);

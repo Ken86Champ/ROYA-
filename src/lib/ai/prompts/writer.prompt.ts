@@ -53,7 +53,7 @@ ${persona.tone}`;
   if (persona.insiderKnowledge) prompt += `\n\nINSIDER-WISSEN (natürlich einbauen, nicht forcieren):\n${persona.insiderKnowledge}`;
   if (persona.exampleConversation) prompt += `\n\nBEISPIEL-GESPRÄCHSSTIL:\n${persona.exampleConversation}`;
 
-  // ── Framework-specific instructions (override defaults if provided) ──
+  // ── Framework-specific instructions (evolved framework or ROYA Standard — already unified) ──
   if (framework?.writerInstructions) {
     prompt += `\n\n${framework.writerInstructions}`;
   } else {
@@ -72,7 +72,11 @@ SCHREIBREGELN — diese gelten absolut:
 - Wenn die Person skeptisch ist — nicht drücken, Vertrauen aufbauen.
 - Wenn die Person offen ist — ruhig führen, nicht überwältigen.
 - Nicht mehr als 1 Gedanke pro Nachricht.
-- Schreib auf Deutsch, Schweizer Wendungen erlaubt.
+- Schreib auf Deutsch, Schweizer Wendungen erlaubt.`;
+  }
+
+  // Checker always runs — regardless of learnings
+  prompt += `
 
 Nach der Nachricht: Prüfe sie sofort als Checker.
 Prüfkriterien:
@@ -84,7 +88,6 @@ Prüfkriterien:
 6. Sollte hier ein Mensch übernehmen?
 
 Wenn nötig: kürze oder überarbeite die Nachricht.`;
-  }
 
   // ── Rules (from framework or campaign) ──
   const activeRules = framework?.rules ?? [];

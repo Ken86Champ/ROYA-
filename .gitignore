@@ -1,6 +1,12 @@
 .env
 .env.local
 roya-settings.json
+roya-learned-rules.json
+roya-learned-rules.backup.json
+roya-evolved-framework.json
+roya-evolved-framework.backup.json
+roya-evolved-framework.json
+roya-evolved-framework.backup.json
 node_modules/
 .next/
 dist/

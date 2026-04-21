@@ -14,57 +14,12 @@ import * as campaignStore from "../../src/lib/campaign-store";
 import * as convStore from "../../src/lib/conversation-store";
 import * as rateLimiter from "../../src/lib/rate-limiter";
 import * as abStore from "../../src/lib/ab-store";
+import * as execLog from "../../src/lib/execution-log";
+import { send as channelSend } from "../channels";
 import type { Channel } from "../../src/lib/conversation-store";
+import type { ChannelType } from "../channels";
 
 const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
-
-// ── Transport helpers ──────────────────────────────────────────────────────────
-
-async function sendViaTwilio(to: string, body: string, channel: Channel): Promise<boolean> {
-  const sid   = process.env.TWILIO_ACCOUNT_SID;
-  const token = process.env.TWILIO_AUTH_TOKEN;
-  const from  = process.env.TWILIO_FROM_NUMBER;
-  if (!sid || !token || !from) return false;
-
-  const params = new URLSearchParams();
-  params.append("To",   channel === "whatsapp" ? `whatsapp:${to}` : to);
-  params.append("From", channel === "whatsapp" ? `whatsapp:${from}` : from);
-  params.append("Body", body);
-
-  const r = await fetch(
-    `https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${Buffer.from(`${sid}:${token}`).toString("base64")}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: params.toString(),
-    }
-  );
-  return r.ok;
-}
-
-async function sendViaMailgun(to: string, subject: string, body: string): Promise<boolean> {
-  const apiKey = process.env.MAILGUN_API_KEY;
-  const domain = process.env.MAILGUN_DOMAIN;
-  const from   = process.env.MAILGUN_FROM;
-  if (!apiKey || !domain || !from) return false;
-
-  const params = new URLSearchParams();
-  params.append("from", from); params.append("to", to);
-  params.append("subject", subject); params.append("text", body);
-
-  const r = await fetch(`https://api.mailgun.net/v3/${domain}/messages`, {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${Buffer.from(`api:${apiKey}`).toString("base64")}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: params.toString(),
-  });
-  return r.ok;
-}
 
 async function generateVariations(
   stepType: string, leadName: string, channel: string, count = 2
@@ -120,6 +75,12 @@ export async function handleSendMessage(job: Job<SendMessagePayload>): Promise<v
   const contact = campaign.contacts.find(c => c.id === contactId);
   if (!contact) return;
 
+  // Skip contacts paused for human escalation
+  if (contact.status === "human_escalated") {
+    console.log(`[SEND-WORKER] Skipping ${leadName}: human_escalated`);
+    return;
+  }
+
   const step = campaign.flow[stepIndex];
   if (!step) return;
 
@@ -153,21 +114,13 @@ export async function handleSendMessage(job: Job<SendMessagePayload>): Promise<v
     });
   }
 
-  // Send
-  let sent = false;
-  if (channel === "email") {
-    sent = await sendViaMailgun(contactAddr, subject, body);
-  } else {
-    sent = await sendViaTwilio(contactAddr, body, channel as Channel);
-  }
+  // Send via channel abstraction
+  const sendResult = await channelSend({ to: contactAddr, body, channel: channel as ChannelType, subject });
 
-  // Dev fallback
-  if (!sent && process.env.NODE_ENV === "development") {
-    console.log(`[SEND-WORKER DEV] ${leadName} (${channel}): "${body.slice(0, 80)}…"`);
-    sent = true;
+  if (!sendResult.success) {
+    await execLog.log({ campaignId, contactId, contactName: leadName, event: 'error', channel, stepIndex: stepIndex, details: { error: sendResult.error } });
+    throw new Error(`Send failed for ${leadName} via ${channel}: ${sendResult.error}`);
   }
-
-  if (!sent) throw new Error(`Send failed for ${leadName} via ${channel}`);
 
   // Record
   await rateLimiter.recordSend(contactAddr);
@@ -192,6 +145,8 @@ export async function handleSendMessage(job: Job<SendMessagePayload>): Promise<v
   // Channel orchestration check
   const updatedContact = (await campaignStore.getById(campaignId))?.contacts.find(c => c.id === contactId);
   if (updatedContact) await tryAlternativeChannel(campaign, updatedContact);
+
+  await execLog.log({ campaignId, contactId, contactName: leadName, event: 'send', channel, stepIndex: stepIndex, details: { provider: sendResult.provider, messageId: sendResult.messageId, variationId } });
 
   console.log(`[SEND-WORKER] ✓ ${leadName} (${channel}) step ${stepIndex} — var ${variationId}`);
 }

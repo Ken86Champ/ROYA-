@@ -419,3 +419,16 @@ export async function globalStats() {
       : 0,
   };
 }
+
+export async function removeContact(campaignId: string, contactId: string): Promise<boolean> {
+  const { error } = await supabase
+    .from("campaign_contacts")
+    .delete()
+    .eq("id", contactId)
+    .eq("campaign_id", campaignId);
+  if (error) {
+    console.error("[campaign-store] removeContact error:", error.message);
+    return false;
+  }
+  return true;
+}

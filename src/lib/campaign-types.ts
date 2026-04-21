@@ -111,7 +111,7 @@ export interface CampaignContact {
   name: string;
   contact: string;
   channel: Channel;
-  status: "pending" | "contacted" | "replied" | "interested" | "booked" | "closed" | "opted_out";
+  status: "pending" | "contacted" | "replied" | "interested" | "booked" | "closed" | "opted_out" | "human_escalated";
   currentStep: number;
   lastContactedAt?: string;
   convId?: string;

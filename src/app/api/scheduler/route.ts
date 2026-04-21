@@ -10,45 +10,19 @@ import * as campaignStore from "@/lib/campaign-store";
 import * as convStore from "@/lib/conversation-store";
 import * as rateLimiter from "@/lib/rate-limiter";
 import * as abStore from "@/lib/ab-store";
+import * as execLog from "@/lib/execution-log";
 import { enqueueSend, enqueueNoReplyCheck, isQueueAvailable } from "@/lib/queue";
+import { send as channelSend } from "@/server/channels";
 import type { Channel } from "@/lib/conversation-store";
-
-// ── Transport helpers ──────────────────────────────────────────────────────────
-
-async function sendViaTwilio(to: string, body: string, channel: Channel): Promise<boolean> {
-  const sid = process.env.TWILIO_ACCOUNT_SID, token = process.env.TWILIO_AUTH_TOKEN, from = process.env.TWILIO_FROM_NUMBER;
-  if (!sid || !token || !from) return false;
-  const p = new URLSearchParams();
-  p.append("To",   channel === "whatsapp" ? `whatsapp:${to}` : to);
-  p.append("From", channel === "whatsapp" ? `whatsapp:${from}` : from);
-  p.append("Body", body);
-  const r = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
-    method: "POST",
-    headers: { Authorization: `Basic ${Buffer.from(`${sid}:${token}`).toString("base64")}`, "Content-Type": "application/x-www-form-urlencoded" },
-    body: p.toString(),
-  });
-  return r.ok;
-}
-
-async function sendViaMailgun(to: string, subject: string, body: string): Promise<boolean> {
-  const apiKey = process.env.MAILGUN_API_KEY, domain = process.env.MAILGUN_DOMAIN, from = process.env.MAILGUN_FROM;
-  if (!apiKey || !domain || !from) return false;
-  const p = new URLSearchParams();
-  p.append("from", from); p.append("to", to); p.append("subject", subject); p.append("text", body);
-  const r = await fetch(`https://api.mailgun.net/v3/${domain}/messages`, {
-    method: "POST",
-    headers: { Authorization: `Basic ${Buffer.from(`api:${apiKey}`).toString("base64")}`, "Content-Type": "application/x-www-form-urlencoded" },
-    body: p.toString(),
-  });
-  return r.ok;
-}
+import type { ChannelType } from "@/server/channels";
 
 // ── Main scheduler logic ───────────────────────────────────────────────────────
 
-interface SchedulerResult { processed: number; sent: number; skipped: number; errors: string[]; queued: number; }
+interface SchedulerResult { processed: number; sent: number; skipped: number; errors: string[]; queued: number; runId: string; }
 
 async function runScheduler(): Promise<SchedulerResult> {
-  const result: SchedulerResult = { processed: 0, sent: 0, skipped: 0, errors: [], queued: 0 };
+  const runId = `run-${Date.now()}`;
+  const result: SchedulerResult = { processed: 0, sent: 0, skipped: 0, errors: [], queued: 0, runId };
   const useQueue = await isQueueAvailable();
   const campaigns = (await campaignStore.getAll()).filter(c => c.status === "active");
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
@@ -57,7 +31,12 @@ async function runScheduler(): Promise<SchedulerResult> {
     for (const contact of campaign.contacts) {
       result.processed++;
 
-      if (["booked", "closed", "opted_out"].includes(contact.status)) { result.skipped++; continue; }
+      // Skip terminal + human_escalated statuses
+      if (["booked", "closed", "opted_out", "human_escalated"].includes(contact.status)) {
+        await execLog.log({ campaignId: campaign.id, contactId: contact.id, contactName: contact.name, event: 'skip', details: { reason: `status=${contact.status}` } });
+        result.skipped++;
+        continue;
+      }
 
       const rateCheck = await rateLimiter.canSend(contact.contact);
       if (!rateCheck.allowed) { result.skipped++; continue; }
@@ -83,14 +62,21 @@ async function runScheduler(): Promise<SchedulerResult> {
         continue;
       }
 
-      // ── Condition node: evaluate intent and route, no send ──
+      // ── Condition node: evaluate intent from FRESH conversation state ──
       if (step.type === "condition") {
-        const conv = contact.convId ? await convStore.findByContact(contact.contact) : null;
+        const conv = contact.convId ? await convStore.getById(contact.convId) : await convStore.findByContact(contact.contact);
         const lastIntent = conv?.lastIntent?.intent ?? "no_reply";
-        const branch = step.branches?.find(b => b.intent === lastIntent)
+        // Validate freshness: only route if conversation was active within last 7 days
+        const intentAge = conv?.lastActivity
+          ? (Date.now() - new Date(conv.lastActivity).getTime()) / 86400000
+          : Infinity;
+        const effectiveIntent = intentAge <= 7 ? lastIntent : "no_reply";
+
+        const branch = step.branches?.find(b => b.intent === effectiveIntent)
           ?? step.branches?.find(b => b.intent === "default");
         if (branch) {
           await campaignStore.setContactStep(campaign.id, contact.id, branch.nextStepIndex);
+          await execLog.log({ campaignId: campaign.id, contactId: contact.id, contactName: contact.name, event: 'step_advance', stepIndex: branch.nextStepIndex, details: { from: 'condition', intent: effectiveIntent, intentAge: Math.round(intentAge), fresh: intentAge <= 7 } });
         }
         result.skipped++;
         continue;
@@ -99,6 +85,7 @@ async function runScheduler(): Promise<SchedulerResult> {
       // ── Exit node: close the contact ──
       if (step.type === "exit") {
         await campaignStore.updateContactStatus(campaign.id, contact.id, "closed");
+        await execLog.log({ campaignId: campaign.id, contactId: contact.id, contactName: contact.name, event: 'closed', details: { reason: 'exit_node' } });
         result.skipped++;
         continue;
       }
@@ -109,6 +96,7 @@ async function runScheduler(): Promise<SchedulerResult> {
           campaignId: campaign.id, contactId: contact.id, stepIndex,
           channel: contact.channel, contact: contact.contact, leadName: contact.name,
         });
+        await execLog.log({ campaignId: campaign.id, contactId: contact.id, contactName: contact.name, event: 'queued', channel: contact.channel, stepIndex, details: { queue: 'send_message' } });
         result.queued++;
         continue;
       }
@@ -140,13 +128,8 @@ async function runScheduler(): Promise<SchedulerResult> {
         if (!body) { result.skipped++; continue; }
 
         let sent = false;
-        if (contact.channel === "email") sent = await sendViaMailgun(contact.contact, subject, body);
-        else sent = await sendViaTwilio(contact.contact, body, contact.channel);
-
-        if (!sent && process.env.NODE_ENV === "development") {
-          console.log(`[SCHEDULER DEV] ${contact.name}: "${body.slice(0, 80)}…"`);
-          sent = true;
-        }
+        const sendResult = await channelSend({ to: contact.contact, body, channel: contact.channel as ChannelType, subject });
+        sent = sendResult.success;
 
         if (sent) {
           await rateLimiter.recordSend(contact.contact);
@@ -167,8 +150,10 @@ async function runScheduler(): Promise<SchedulerResult> {
           }
 
           result.sent++;
+          await execLog.log({ campaignId: campaign.id, contactId: contact.id, contactName: contact.name, event: 'send', channel: contact.channel, stepIndex, details: { provider: sendResult.provider, messageId: sendResult.messageId } });
         } else {
           result.errors.push(`Send failed: ${contact.name} (${contact.channel})`);
+          await execLog.log({ campaignId: campaign.id, contactId: contact.id, contactName: contact.name, event: 'error', channel: contact.channel, stepIndex, details: { error: sendResult.error || 'send_failed' } });
         }
       } catch (err) {
         result.errors.push(`Error for ${contact.name}: ${String(err)}`);

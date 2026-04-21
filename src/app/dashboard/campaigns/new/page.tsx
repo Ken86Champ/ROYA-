@@ -306,6 +306,32 @@ export default function NewCampaignPage() {
   const handleLaunch = async () => {
     setLaunching(true);
     const contacts = buildContacts();
+
+    // Sync to CRM (roya_contacts) with dedup before campaign creation
+    if (contacts.length > 0) {
+      try {
+        await fetch("/api/contacts/import", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contacts: contacts.map(c => ({
+              firstName: c.firstName || "",
+              lastName: c.lastName || "",
+              fullName: c.fullName || c.name,
+              email: c.email || (c.contact.includes("@") ? c.contact : undefined),
+              phone: c.phone || (!c.contact.includes("@") ? c.contact : undefined),
+              company: c.company || "",
+              jobTitle: c.jobTitle || "",
+              channel: c.channel,
+            })),
+            deduplicateBy: "both",
+          }),
+        });
+      } catch {
+        // Non-blocking: CRM import is best-effort
+      }
+    }
+
     try {
       const res = await fetch("/api/campaigns", {
         method: "POST",

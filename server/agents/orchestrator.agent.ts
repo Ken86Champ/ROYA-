@@ -1,11 +1,17 @@
 import Anthropic from "@anthropic-ai/sdk";
+import {
+  toolSegmentContacts,
+  toolSendOutreach,
+  toolScheduleFollowUp,
+  toolMarkBooked,
+} from "./orchestrator.tools";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const tools: Anthropic.Tool[] = [
   {
     name: "segment_contacts",
-    description: "Segmentiert CRM-Kontakte in hot/warm/cold/lost Kategorien",
+    description: "Segmentiert CRM-Kontakte in hot/warm/cold/lost Kategorien via AI-Analyse. Schreibt Ergebnisse in die DB.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -17,7 +23,7 @@ const tools: Anthropic.Tool[] = [
   },
   {
     name: "send_initial_outreach",
-    description: "Generiert und sendet personalisierte Erstnachricht an Kontakt",
+    description: "Generiert personalisierte Nachricht via Writer-Agent und enqueued den Versand via BullMQ.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -30,7 +36,7 @@ const tools: Anthropic.Tool[] = [
   },
   {
     name: "schedule_follow_up",
-    description: "Plant ein automatisches Follow-up für einen Kontakt",
+    description: "Plant ein verzögertes Follow-up: aktualisiert den Step in der DB und enqueued Send-Job mit Delay.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -44,7 +50,7 @@ const tools: Anthropic.Tool[] = [
   },
   {
     name: "mark_contact_booked",
-    description: "Markiert einen Kontakt als gebucht und trackt Revenue",
+    description: "Markiert Kontakt als gebucht in campaign_contacts + CRM, loggt Revenue-Event.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -56,16 +62,32 @@ const tools: Anthropic.Tool[] = [
   },
 ];
 
-function runTool(name: string, input: Record<string, unknown>): string {
+async function runTool(
+  name: string,
+  input: Record<string, unknown>,
+  ctx: { campaignId: string; clientContext: string; calendarUrl?: string },
+): Promise<string> {
   switch (name) {
     case "segment_contacts":
-      return JSON.stringify({ success: true, message: `Contacts segmented for campaign ${input.campaignId}` });
+      return toolSegmentContacts({
+        campaignId: (input.campaignId as string) || ctx.campaignId,
+        clientContext: (input.clientContext as string) || ctx.clientContext,
+      });
     case "send_initial_outreach":
-      return JSON.stringify({ success: true, message: `Outreach sent to ${input.contactId} via ${input.channel}` });
+      return toolSendOutreach(
+        { contactId: input.contactId as string, segment: input.segment as string, channel: input.channel as string },
+        ctx,
+      );
     case "schedule_follow_up":
-      return JSON.stringify({ success: true, message: `Follow-up step ${input.step} scheduled for ${input.contactId} in ${input.delayDays} days` });
+      return toolScheduleFollowUp(
+        { contactId: input.contactId as string, delayDays: input.delayDays as number, channel: input.channel as string, step: input.step as number },
+        ctx,
+      );
     case "mark_contact_booked":
-      return JSON.stringify({ success: true, message: `Contact ${input.contactId} booked. Deal: ${input.dealValue ?? 0}` });
+      return toolMarkBooked(
+        { contactId: input.contactId as string, dealValue: input.dealValue as number | undefined },
+        ctx,
+      );
     default:
       return JSON.stringify({ error: "Unknown tool" });
   }
@@ -85,6 +107,12 @@ export async function runCampaignOrchestrator(campaign: {
     content: `Starte Kampagne "${campaign.name}" (ID: ${campaign.id}). ${campaign.totalContacts} Kontakte warten auf Reaktivierung.`,
   }];
 
+  const toolCtx = {
+    campaignId: campaign.id,
+    clientContext: campaign.clientContext,
+    calendarUrl: campaign.calendarUrl,
+  };
+
   // Agentic loop — max 10 iterations
   for (let i = 0; i < 10; i++) {
     const response = await client.messages.create({
@@ -95,7 +123,15 @@ Du koordinierst eine vollautomatische Kampagne für: ${campaign.clientName}
 Angebots-Kontext: ${campaign.clientContext}
 Verfügbare Kanäle: ${campaign.channels.join(", ")}
 ${campaign.calendarUrl ? `Kalender: ${campaign.calendarUrl}` : ""}
-Agiere autonom: Segmentiere → Priorisiere → Sende → Plane Follow-ups → Tracke Buchungen.`,
+Kampagnen-ID: ${campaign.id}
+
+Deine Tools führen ECHTE Aktionen aus:
+- segment_contacts: Ruft den Segmentation-Agent auf (Claude Haiku) → speichert Ergebnisse in DB
+- send_initial_outreach: Ruft den Writer-Agent auf (Claude Sonnet) → enqueued BullMQ Send-Job
+- schedule_follow_up: Aktualisiert Step in DB → enqueued verzögertes BullMQ Send-Job
+- mark_contact_booked: Updates Status in campaign_contacts + CRM → loggt Revenue-Event
+
+Agiere autonom: Segmentiere → Priorisiere Hot → Sende → Plane Follow-ups für Warm/Cold.`,
       tools,
       messages,
     });
@@ -106,13 +142,19 @@ Agiere autonom: Segmentiere → Priorisiere → Sende → Plane Follow-ups → T
     if (response.stop_reason === "end_turn") break;
 
     if (response.stop_reason === "tool_use") {
-      const toolResults: Anthropic.ToolResultBlockParam[] = response.content
-        .filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use")
-        .map(b => ({
+      const toolBlocks = response.content.filter(
+        (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
+      );
+
+      const toolResults: Anthropic.ToolResultBlockParam[] = [];
+      for (const b of toolBlocks) {
+        const result = await runTool(b.name, b.input as Record<string, unknown>, toolCtx);
+        toolResults.push({
           type: "tool_result" as const,
           tool_use_id: b.id,
-          content: runTool(b.name, b.input as Record<string, unknown>),
-        }));
+          content: result,
+        });
+      }
       messages.push({ role: "user", content: toolResults });
     } else {
       break;

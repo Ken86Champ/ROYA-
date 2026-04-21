@@ -1,12 +1,17 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState, useEffect } from "react";
 
 const navItems = [
   { href: "/dashboard",              label: "Dashboard",      icon: "⬡" },
   { href: "/dashboard/campaigns",    label: "Kampagnen",      icon: "◎" },
+  { href: "/dashboard/contacts",     label: "Kontakte",       icon: "◉" },
+  { href: "/dashboard/conversations",label: "Gespräche",      icon: "◬" },
+  { href: "/dashboard/escalations",  label: "Eskalationen",   icon: "⚠" },
   { href: "/dashboard/clients",      label: "Endkunden",      icon: "◈" },
   { href: "/dashboard/appointments", label: "Termine",        icon: "◇" },
+  { href: "/dashboard/simulation",   label: "Simulation",     icon: "▷" },
   { href: "/dashboard/settings",     label: "Einstellungen",  icon: "⚙" },
 ];
 
@@ -20,6 +25,22 @@ function getPageTitle(pathname: string): string {
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const pageTitle = getPageTitle(pathname);
+
+  const [planInfo, setPlanInfo] = useState<{
+    planLabel: string; contactsPercent: number;
+    usage: { contacts: number }; limits: { maxContacts: number };
+    subscriptionStatus: string;
+  } | null>(null);
+
+  useEffect(() => {
+    // Acquire dashboard session cookie FIRST, then load data
+    fetch("/api/auth/session", { method: "POST" }).then(() => {
+      fetch("/api/billing/status").then(r => r.json()).then(setPlanInfo).catch(() => {});
+    }).catch(() => {
+      // Fallback: try loading anyway (dev mode localhost bypass)
+      fetch("/api/billing/status").then(r => r.json()).then(setPlanInfo).catch(() => {});
+    });
+  }, []);
 
   return (
     <div className="flex h-screen bg-[#0A0A0F]">
@@ -71,13 +92,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <div className="px-3 pb-4 space-y-3">
           <div className="mx-2 p-3 rounded-xl bg-violet-50 border border-violet-100">
             <div className="flex items-center gap-2 mb-1.5">
-              <span className="text-[10px] font-bold text-violet-600 uppercase tracking-wider">Pro Plan</span>
-              <span className="badge bg-violet-100 text-violet-600 text-[10px]">Aktiv</span>
+              <span className="text-[10px] font-bold text-violet-600 uppercase tracking-wider">{planInfo?.planLabel || "Starter"} Plan</span>
+              <span className="badge bg-violet-100 text-violet-600 text-[10px]">
+                {planInfo?.subscriptionStatus === "active" ? "Aktiv" : planInfo?.subscriptionStatus === "past_due" ? "Offen" : "Aktiv"}
+              </span>
             </div>
             <div className="w-full h-1.5 bg-violet-100 rounded-full overflow-hidden">
-              <div className="h-full w-1/3 bg-gradient-to-r from-violet-500 to-violet-400 rounded-full" />
+              <div className="h-full bg-gradient-to-r from-violet-500 to-violet-400 rounded-full transition-all"
+                style={{ width: `${planInfo?.contactsPercent ?? 33}%` }} />
             </div>
-            <p className="text-[10px] text-slate-400 mt-1.5">340 / 1.000 Kontakte</p>
+            <p className="text-[10px] text-slate-400 mt-1.5">
+              {planInfo
+                ? `${planInfo.usage.contacts.toLocaleString()} / ${planInfo.limits.maxContacts === Infinity ? "∞" : planInfo.limits.maxContacts.toLocaleString()} Kontakte`
+                : "Lädt…"}
+            </p>
           </div>
 
           <Link href="/dashboard/settings" className="mx-2 flex items-center gap-3 px-2 py-2.5 rounded-xl hover:bg-slate-50 transition-colors cursor-pointer">

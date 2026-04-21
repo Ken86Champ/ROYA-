@@ -59,8 +59,35 @@ export async function decideStrategy(
     });
 
     const raw = (response.content[0] as { text: string }).text.trim();
-    const json = raw.replace(/^```json?\n?/, '').replace(/\n?```$/, '');
-    const parsed = JSON.parse(json);
+    let json = raw.replace(/^```json?\s*\n?/, '').replace(/\n?\s*```$/, '');
+    const braceStart = json.indexOf('{');
+    const braceEnd = json.lastIndexOf('}');
+    if (braceStart !== -1 && braceEnd > braceStart) json = json.slice(braceStart, braceEnd + 1);
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(json);
+    } catch {
+      // Repair: collapse newlines, remove trailing commas
+      try {
+        const repaired = json.replace(/,\s*([}\]])/g, '$1').replace(/[\r\n]+/g, ' ');
+        parsed = JSON.parse(repaired);
+      } catch {
+        // Last resort: regex-extract key fields
+        const extract = (key: string) => {
+          const m = json.match(new RegExp(`"${key}"\\s*:\\s*"([^"]*?)"`));
+          return m ? m[1] : '';
+        };
+        parsed = {
+          primaryGoal: extract('primaryGoal'),
+          nextAction: extract('nextAction') || 'ask_question',
+          angle: extract('angle'),
+          desiredTone: extract('desiredTone') || 'neutral',
+          maxLength: extract('maxLength') || 'short',
+          thingsToAvoid: [],
+        };
+        console.warn('[ROYA] Strategist JSON repair: used regex fallback');
+      }
+    }
 
     return {
       primaryGoal: parsed.primaryGoal || '',

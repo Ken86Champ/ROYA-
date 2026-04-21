@@ -12,10 +12,37 @@ import {
   extractTwilioParams,
 } from '@/lib/compliance/webhook-signature';
 import { DEFAULT_PERSONA } from '@/lib/types/conversation';
+import { supabase } from '@/lib/supabase';
 
-// In-process dedup: ignore MessageSids we've already started processing
-// (protects against Twilio sending the same webhook twice within the same instance)
+// In-process dedup (fast path) + Supabase dedup (persistent path)
 const _processing = new Set<string>();
+
+async function isDuplicate(sid: string): Promise<boolean> {
+  if (!sid) return false;
+  if (_processing.has(sid)) return true;
+  try {
+    const { data } = await supabase
+      .from('webhook_events')
+      .select('id')
+      .eq('id', sid)
+      .single();
+    return !!data;
+  } catch {
+    return false;
+  }
+}
+
+async function markProcessed(sid: string): Promise<void> {
+  if (!sid) return;
+  _processing.delete(sid);
+  try {
+    await supabase.from('webhook_events').insert({
+      id: sid,
+      provider: 'twilio',
+      event_type: 'inbound',
+    });
+  } catch { /* ignore duplicate */ }
+}
 
 const TWIML_EMPTY = "<?xml version='1.0' encoding='UTF-8'?><Response></Response>";
 const STOP_KEYWORDS = [
@@ -89,7 +116,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
 
     // ── Dedup: skip if already processing this MessageSid ────────────────
-    if (messageSid && _processing.has(messageSid)) {
+    if (messageSid && await isDuplicate(messageSid)) {
       console.log('[ROYA] Duplicate webhook ignored:', messageSid);
       return ok();
     }
@@ -126,7 +153,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       } catch (err) {
         console.error('[ROYA] Background orchestrator error:', err);
       } finally {
-        if (messageSid) _processing.delete(messageSid);
+        if (messageSid) await markProcessed(messageSid);
       }
     });
 

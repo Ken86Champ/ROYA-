@@ -10,6 +10,8 @@ import { decideStrategy } from '@/lib/ai/strategist';
 import { writeAndCheck } from '@/lib/ai/writer';
 import { DEFAULT_PERSONA } from '@/lib/types/conversation';
 import { SYSTEM_FRAMEWORKS } from '@/lib/framework-store';
+import { loadEvolvedFramework } from '@/lib/framework-evolution';
+import { supabase } from '@/lib/supabase';
 import type {
   ConversationContext,
   HistoryMessage,
@@ -133,19 +135,30 @@ export async function POST(req: NextRequest) {
 
     const persona = business || DEFAULT_PERSONA;
 
-    // ── Build framework options from dedicated framework field or ROYA Standard fallback ──
-    const royaStandard = SYSTEM_FRAMEWORKS[0]; // ROYA Standard is always first
+    // ── Build framework options from dedicated framework field, evolved framework, or ROYA Standard fallback ──
+    const royaStandard = SYSTEM_FRAMEWORKS[0]; // ROYA Standard is always last resort
+    const evolved = await loadEvolvedFramework();
     const fw = framework && framework.writerInstructions
       ? framework
-      : {
-          writerInstructions: royaStandard.writerInstructions,
-          strategistInstructions: royaStandard.strategistInstructions,
-          interpreterInstructions: royaStandard.interpreterInstructions,
-          rules: royaStandard.rules,
-          forbiddenPhrases: royaStandard.forbiddenPhrases,
-          temperature: royaStandard.temperature,
-          exampleMessages: royaStandard.exampleMessages,
-        };
+      : evolved
+        ? {
+            writerInstructions: evolved.writerInstructions,
+            strategistInstructions: evolved.strategistInstructions,
+            interpreterInstructions: evolved.interpreterInstructions,
+            rules: evolved.rules,
+            forbiddenPhrases: evolved.forbiddenPhrases,
+            temperature: evolved.temperature,
+            exampleMessages: evolved.exampleMessages,
+          }
+        : {
+            writerInstructions: royaStandard.writerInstructions,
+            strategistInstructions: royaStandard.strategistInstructions,
+            interpreterInstructions: royaStandard.interpreterInstructions,
+            rules: royaStandard.rules,
+            forbiddenPhrases: royaStandard.forbiddenPhrases,
+            temperature: royaStandard.temperature,
+            exampleMessages: royaStandard.exampleMessages,
+          };
     const bizAny = business as unknown as Record<string, unknown> | undefined;
     const rules = fw.rules ?? (bizAny?.rules as string[] | undefined) ?? [];
     const forbiddenPhrases = fw.forbiddenPhrases ?? [];
@@ -219,6 +232,43 @@ export async function POST(req: NextRequest) {
       reply = `Danke für deine Nachricht! Lass mich da kurz schauen und melde mich gleich.`;
     }
 
+    // Track conversation event (non-blocking)
+    const frameworkVersion = evolved?.version ?? 0;
+    supabase.from('conversation_events').insert([{
+      conversation_id: 'simulator',
+      channel: 'sms',
+      framework_version: frameworkVersion,
+      intent: interpretation.microIntent,
+      action: 'reply',
+      confidence: phase2.confidence,
+      state: currentState,
+    }]).then(() => {}).catch(() => {});
+
+    // Track outcome for terminal states or terminal intents (non-blocking)
+    const terminalStates = ['dead', 'not_now', 'handoff_required', 'qualified_ready'];
+    const terminalIntents = ['hard_rejection', 'soft_rejection', 'angry'];
+    const isTerminal = terminalStates.includes(currentState) || phase2.shouldHandoff
+      || terminalIntents.includes(interpretation.microIntent)
+      || strategy.nextAction === 'stop' || strategy.nextAction === 'close_loop'
+      || strategy.nextAction === 'book_call';
+    if (isTerminal) {
+      const outcome = currentState === 'qualified_ready' || strategy.nextAction === 'book_call' ? 'booked'
+        : currentState === 'handoff_required' || phase2.shouldHandoff || interpretation.microIntent === 'angry' ? 'handed_off'
+        : interpretation.microIntent === 'hard_rejection' || interpretation.microIntent === 'soft_rejection' ? 'rejected'
+        : strategy.nextAction === 'stop' || strategy.nextAction === 'close_loop' ? 'rejected'
+        : 'ghosted';
+      supabase.from('conversation_outcomes').insert([{
+        conversation_id: `sim-${Date.now()}`,
+        outcome,
+        framework_version: frameworkVersion,
+        turns_count: leadTurns + 1,
+        avg_confidence: phase2.confidence,
+        final_state: currentState,
+        channel: 'sms',
+        lead_name: leadName,
+      }]).then(() => {}).catch(() => {});
+    }
+
     return NextResponse.json({
       reply,
       intent:         interpretation.microIntent,
@@ -231,6 +281,7 @@ export async function POST(req: NextRequest) {
       state: currentState,
       interpretation,
       strategy,
+      frameworkVersion,
     });
   } catch (err) {
     console.error('[ROYA] /api/converse error:', err);

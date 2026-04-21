@@ -50,6 +50,11 @@ export async function PATCH(
     if (contacts) await store.replaceContacts(id, contacts);
     return NextResponse.json(await store.getById(id));
   }
+  if (action === "remove_contact" && body.contactId) {
+    const ok = await store.removeContact(id, body.contactId);
+    if (!ok) return NextResponse.json({ error: "Contact not found" }, { status: 404 });
+    return NextResponse.json(await store.getById(id));
+  }
 
   return NextResponse.json({ error: "Unknown action" }, { status: 400 });
 }

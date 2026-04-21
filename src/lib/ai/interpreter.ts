@@ -56,8 +56,17 @@ export async function interpretMessage(
     });
 
     const raw = (response.content[0] as { text: string }).text.trim();
-    const json = raw.replace(/^```json?\n?/, '').replace(/\n?```$/, '');
-    const parsed = JSON.parse(json);
+    let json = raw.replace(/^```json?\s*\n?/, '').replace(/\n?\s*```$/, '');
+    const braceStart = json.indexOf('{');
+    const braceEnd = json.lastIndexOf('}');
+    if (braceStart !== -1 && braceEnd > braceStart) json = json.slice(braceStart, braceEnd + 1);
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(json);
+    } catch {
+      const repaired = json.replace(/,\s*([}\]])/g, '$1').replace(/[\r\n]+/g, ' ');
+      parsed = JSON.parse(repaired);
+    }
 
     return {
       explicitMeaning: parsed.explicitMeaning || '',

@@ -32,6 +32,8 @@ export default function CampaignsPage() {
   const [actioning, setActioning] = useState<string | null>(null);
   const [sending, setSending] = useState<string | null>(null);
   const [sendResult, setSendResult] = useState<Record<string, { sent: number; skipped: number }>>({});
+  const [orchestrating, setOrchestrating] = useState<string | null>(null);
+  const [orchResult, setOrchResult] = useState<Record<string, { status: string; summary?: string }>>({});
   const [abOpen, setAbOpen] = useState<string | null>(null);
   const [abStats, setAbStats] = useState<Record<string, VariationStats[]>>({});
   const [kpiOpen, setKpiOpen] = useState<string | null>(null);
@@ -81,6 +83,18 @@ export default function CampaignsPage() {
     }
   };
 
+  const orchestrate = async (camp: Campaign) => {
+    setOrchestrating(camp.id);
+    try {
+      const res = await fetch(`/api/campaigns/${camp.id}/orchestrate`, { method: "POST" });
+      const data = await res.json();
+      setOrchResult(prev => ({ ...prev, [camp.id]: { status: data.status || "error", summary: data.summary || data.error } }));
+      await load();
+    } finally {
+      setOrchestrating(null);
+    }
+  };
+
   const toggleStatus = async (camp: Campaign) => {
     setActioning(camp.id);
     const action = camp.status === "active" ? "pause" : "start";
@@ -107,9 +121,15 @@ export default function CampaignsPage() {
           <h1 className="text-2xl font-bold text-slate-900">Kampagnen</h1>
           <p className="text-slate-400 text-sm mt-1">Autonome Reaktivierungskampagnen</p>
         </div>
-        <Link href="/dashboard/campaigns/new" className="btn-primary flex items-center gap-2 text-sm px-4 py-2.5">
-          <span>+</span><span>Neue Kampagne</span>
-        </Link>
+        <div className="flex items-center gap-2">
+          <a href="/api/export?type=campaigns" download
+            className="px-3 py-2.5 rounded-xl text-sm font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 transition-all">
+            ↓ CSV
+          </a>
+          <Link href="/dashboard/campaigns/new" className="btn-primary flex items-center gap-2 text-sm px-4 py-2.5">
+            <span>+</span><span>Neue Kampagne</span>
+          </Link>
+        </div>
       </div>
 
       {/* Stats bar */}
@@ -180,14 +200,24 @@ export default function CampaignsPage() {
                       <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} />{st.label}
                     </span>
                     {camp.status === "active" && (
-                      <button
-                        onClick={() => sendNow(camp)}
-                        disabled={sending === camp.id}
-                        className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-violet-600 hover:bg-violet-700 text-white transition-all disabled:opacity-40">
-                        {sending === camp.id ? "…" : sendResult[camp.id]
-                          ? `✓ ${sendResult[camp.id].sent} gesendet`
-                          : "Jetzt senden →"}
-                      </button>
+                      <>
+                        <button
+                          onClick={() => orchestrate(camp)}
+                          disabled={orchestrating === camp.id}
+                          className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-gradient-to-r from-violet-600 to-cyan-600 hover:from-violet-700 hover:to-cyan-700 text-white transition-all disabled:opacity-40">
+                          {orchestrating === camp.id ? "AI…" : orchResult[camp.id]
+                            ? `✓ ${orchResult[camp.id].status}`
+                            : "🤖 AI Orchestrate"}
+                        </button>
+                        <button
+                          onClick={() => sendNow(camp)}
+                          disabled={sending === camp.id}
+                          className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-violet-600 hover:bg-violet-700 text-white transition-all disabled:opacity-40">
+                          {sending === camp.id ? "…" : sendResult[camp.id]
+                            ? `✓ ${sendResult[camp.id].sent} gesendet`
+                            : "Jetzt senden →"}
+                        </button>
+                      </>
                     )}
                     <button
                       onClick={() => toggleStatus(camp)}
@@ -267,6 +297,10 @@ export default function CampaignsPage() {
                     </div>
                   ))}
                   <div className="ml-auto flex items-center gap-3">
+                    <Link href={`/dashboard/campaigns/${camp.id}`}
+                      className="text-[10px] text-blue-500 hover:text-blue-700 font-semibold transition-colors">
+                      ◎ Detail
+                    </Link>
                     <Link href={`/dashboard/campaigns/${camp.id}/edit`}
                       className="text-[10px] text-slate-400 hover:text-violet-600 font-semibold transition-colors">
                       ✎ Bearbeiten

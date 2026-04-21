@@ -1,7 +1,64 @@
 "use client";
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import type { DashboardKPIs } from "@/lib/types/analytics";
+
+const RechartsLine = dynamic(() => import("recharts").then(m => {
+  const { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } = m;
+  return function TrendChart({ data }: { data: { date: string; sent: number; replied: number; booked: number }[] }) {
+    return (
+      <ResponsiveContainer width="100%" height={220}>
+        <LineChart data={data} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+          <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} tickFormatter={(v: string) => v.slice(5)} />
+          <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} />
+          <Tooltip contentStyle={{ fontSize: 12, borderRadius: 12, border: "1px solid #e2e8f0" }} />
+          <Line type="monotone" dataKey="sent" name="Gesendet" stroke="#8b5cf6" strokeWidth={2} dot={false} />
+          <Line type="monotone" dataKey="replied" name="Geantwortet" stroke="#06b6d4" strokeWidth={2} dot={false} />
+          <Line type="monotone" dataKey="booked" name="Gebucht" stroke="#10b981" strokeWidth={2} dot={false} />
+        </LineChart>
+      </ResponsiveContainer>
+    );
+  };
+}), { ssr: false });
+
+const RechartsBar = dynamic(() => import("recharts").then(m => {
+  const { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } = m;
+  return function ChannelChart({ data }: { data: { channel: string; sent: number; replied: number; booked: number }[] }) {
+    return (
+      <ResponsiveContainer width="100%" height={180}>
+        <BarChart data={data} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+          <XAxis dataKey="channel" tick={{ fontSize: 11, fill: "#64748b" }} />
+          <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} />
+          <Tooltip contentStyle={{ fontSize: 12, borderRadius: 12, border: "1px solid #e2e8f0" }} />
+          <Bar dataKey="sent" name="Gesendet" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
+          <Bar dataKey="replied" name="Geantwortet" fill="#06b6d4" radius={[4, 4, 0, 0]} />
+          <Bar dataKey="booked" name="Gebucht" fill="#10b981" radius={[4, 4, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+    );
+  };
+}), { ssr: false });
+
+const RechartsFunnel = dynamic(() => import("recharts").then(m => {
+  const { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell } = m;
+  return function FunnelChart({ data }: { data: { step: string; value: number; color: string }[] }) {
+    return (
+      <ResponsiveContainer width="100%" height={180}>
+        <BarChart data={data} layout="vertical" margin={{ top: 5, right: 10, left: 10, bottom: 0 }}>
+          <XAxis type="number" tick={{ fontSize: 10, fill: "#94a3b8" }} />
+          <YAxis type="category" dataKey="step" tick={{ fontSize: 11, fill: "#64748b" }} width={90} />
+          <Tooltip contentStyle={{ fontSize: 12, borderRadius: 12, border: "1px solid #e2e8f0" }} />
+          <Bar dataKey="value" radius={[0, 4, 4, 0]}>
+            {data.map((d, i) => <Cell key={i} fill={d.color} />)}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    );
+  };
+}), { ssr: false });
 
 interface Stats {
   campaigns: {
@@ -23,7 +80,69 @@ interface Stats {
   }[];
 }
 
+interface FrameworkAnalytics {
+  versions: {
+    version: number;
+    totalTurns: number;
+    uniqueConversations: number;
+    avgConfidence: number;
+    intentDistribution: Record<string, number>;
+    actionDistribution: Record<string, number>;
+    firstSeen: string;
+    lastSeen: string;
+    outcomes: Record<string, number>;
+    bookingRate: number;
+  }[];
+  currentFramework: {
+    version: number;
+    evolvedAt: string;
+    learningsUsed: number;
+    rulesCount: number;
+    forbiddenCount: number;
+    examplesCount: number;
+    temperature: number;
+    evolutionLog: string[];
+  } | null;
+  totalLearnings: number;
+  totalEvents: number;
+  outcomes: {
+    total: number;
+    booked: number;
+    rejected: number;
+    ghosted: number;
+    handedOff: number;
+  };
+  feedbackLoop: {
+    totalAutoInsights: number;
+    unappliedInsights: number;
+    appliedInsights: number;
+    readyForEvolution: boolean;
+  };
+}
+
 const CHANNEL_ICON: Record<string, string> = { email: "✉", sms: "▣", whatsapp: "◊" };
+
+interface ExecLogEntry {
+  id: string;
+  campaignId: string;
+  contactId?: string;
+  contactName?: string;
+  event: string;
+  channel?: string;
+  stepIndex?: number;
+  details: Record<string, unknown>;
+  createdAt: string;
+}
+
+const EXEC_EVENT_ICON: Record<string, string> = {
+  send: "↗", queued: "◈", skip: "—", error: "✗",
+  channel_switch: "↻", handoff_pause: "⚠", step_advance: "→", closed: "✓",
+};
+const EXEC_EVENT_COLOR: Record<string, string> = {
+  send: "text-emerald-600", queued: "text-blue-500", skip: "text-slate-400",
+  error: "text-red-500", channel_switch: "text-amber-500",
+  handoff_pause: "text-orange-500", step_advance: "text-violet-500", closed: "text-slate-500",
+};
 const STATE_DOT: Record<string, string> = {
   active: "bg-amber-400", replied: "bg-blue-400",
   booked: "bg-emerald-500", closed: "bg-slate-300", human_needed: "bg-red-500",
@@ -58,16 +177,47 @@ const agentStatus = [
 export default function DashboardPage() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [perfKpis, setPerfKpis] = useState<DashboardKPIs | null>(null);
+  const [fwAnalytics, setFwAnalytics] = useState<FrameworkAnalytics | null>(null);
+  const [autoLearnBusy, setAutoLearnBusy] = useState(false);
+  const [autoLearnResult, setAutoLearnResult] = useState<string | null>(null);
+  const [execLogEntries, setExecLogEntries] = useState<ExecLogEntry[]>([]);
+  const [trendDays, setTrendDays] = useState(14);
+  const [trends, setTrends] = useState<{
+    daily: { date: string; sent: number; replied: number; positive: number; booked: number; escalated: number }[];
+    channels: Record<string, { sent: number; replied: number; booked: number }>;
+    campaigns: { id: string; sent: number; replied: number; booked: number }[];
+  } | null>(null);
 
   useEffect(() => {
     const load = () => {
       fetch("/api/stats").then(r => r.json()).then(setStats).catch(() => {});
       fetch("/api/dashboard/kpis").then(r => r.json()).then(setPerfKpis).catch(() => {});
+      fetch("/api/framework-analytics").then(r => r.json()).then(setFwAnalytics).catch(() => {});
+      fetch("/api/execution-log?limit=20").then(r => r.json()).then(d => setExecLogEntries(d.entries ?? [])).catch(() => {});
+      fetch(`/api/dashboard/trends?days=${trendDays}`).then(r => r.json()).then(setTrends).catch(() => {});
     };
     load();
-    const t = setInterval(load, 8000);
+    const t = setInterval(load, 15000);
     return () => clearInterval(t);
-  }, []);
+  }, [trendDays]);
+
+  const triggerAutoLearn = async (action: "analyze" | "evolve") => {
+    setAutoLearnBusy(true);
+    setAutoLearnResult(null);
+    try {
+      const res = await fetch("/api/auto-learn", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const data = await res.json();
+      setAutoLearnResult(data.message || "Fertig.");
+    } catch {
+      setAutoLearnResult("Fehler beim Auto-Learning.");
+    } finally {
+      setAutoLearnBusy(false);
+    }
+  };
 
   const now = new Date();
   const hour = now.getHours();
@@ -157,6 +307,274 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* ── Trend Charts ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6">
+        {/* Line chart — daily activity */}
+        <div className="lg:col-span-2 glass-card p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-base font-semibold text-slate-900">Aktivität</h2>
+              <p className="text-xs text-slate-400 mt-0.5">Tägliche Sends, Antworten & Buchungen</p>
+            </div>
+            <div className="flex gap-1 bg-slate-100 rounded-lg p-0.5">
+              {[7, 14, 30].map(d => (
+                <button key={d} onClick={() => setTrendDays(d)}
+                  className={`px-2.5 py-1 text-[11px] font-semibold rounded-md transition-all ${
+                    trendDays === d ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                  }`}>{d}d</button>
+              ))}
+            </div>
+          </div>
+          {trends?.daily && trends.daily.length > 0 ? (
+            <RechartsLine data={trends.daily} />
+          ) : (
+            <div className="h-[220px] flex items-center justify-center text-xs text-slate-400">Noch keine Trend-Daten</div>
+          )}
+        </div>
+
+        {/* Channel comparison + funnel */}
+        <div className="space-y-5">
+          {/* Channel bars */}
+          <div className="glass-card p-5">
+            <h3 className="text-sm font-semibold text-slate-900 mb-3">Kanal-Vergleich</h3>
+            {trends?.channels ? (
+              <RechartsBar data={Object.entries(trends.channels).map(([channel, v]) => ({
+                channel: channel === "email" ? "E-Mail" : channel === "sms" ? "SMS" : "WhatsApp",
+                ...v,
+              }))} />
+            ) : (
+              <div className="h-[180px] flex items-center justify-center text-xs text-slate-400">—</div>
+            )}
+          </div>
+
+          {/* Conversion funnel (horizontal bars) */}
+          <div className="glass-card p-5">
+            <h3 className="text-sm font-semibold text-slate-900 mb-3">Conversion Funnel</h3>
+            {perfKpis ? (
+              <RechartsFunnel data={[
+                { step: "Gesendet",    value: perfKpis.totalSent ?? 0,     color: "#8b5cf6" },
+                { step: "Geantwortet", value: perfKpis.totalReplies ?? 0,  color: "#06b6d4" },
+                { step: "Qualifiziert",value: perfKpis.totalBookings ?? 0, color: "#f59e0b" },
+                { step: "Gebucht",     value: perfKpis.totalBookings ?? 0, color: "#10b981" },
+              ]} />
+            ) : (
+              <div className="h-[180px] flex items-center justify-center text-xs text-slate-400">—</div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Framework Intelligence */}
+      {fwAnalytics && (fwAnalytics.currentFramework || fwAnalytics.totalEvents > 0) && (
+        <div className="glass-card px-6 py-5 mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-base font-semibold text-slate-900">Framework Intelligence</h2>
+              <p className="text-xs text-slate-400 mt-0.5">Selbstlernendes Framework — Performance je Version</p>
+            </div>
+            {fwAnalytics.currentFramework && (
+              <span className="badge bg-violet-50 text-violet-600 border border-violet-100 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-violet-500" /> v{fwAnalytics.currentFramework.version} aktiv
+              </span>
+            )}
+          </div>
+
+          {/* Current Framework Stats */}
+          {fwAnalytics.currentFramework && (
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+              {[
+                { label: "Learnings", value: fwAnalytics.currentFramework.learningsUsed, icon: "🧠", color: "text-violet-600" },
+                { label: "Regeln", value: fwAnalytics.currentFramework.rulesCount, icon: "◎", color: "text-blue-600" },
+                { label: "Verboten", value: fwAnalytics.currentFramework.forbiddenCount, icon: "✕", color: "text-red-500" },
+                { label: "Beispiele", value: fwAnalytics.currentFramework.examplesCount, icon: "★", color: "text-amber-600" },
+                { label: "Temperatur", value: fwAnalytics.currentFramework.temperature, icon: "◇", color: "text-cyan-600" },
+              ].map(s => (
+                <div key={s.label} className="bg-slate-50 rounded-xl px-3 py-2.5 flex items-center gap-2.5">
+                  <span className={`text-sm ${s.color}`}>{s.icon}</span>
+                  <div>
+                    <p className="text-lg font-bold text-slate-900">{s.value}</p>
+                    <p className="text-[10px] text-slate-400">{s.label}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Version Performance Comparison */}
+          {fwAnalytics.versions.length > 0 && (
+            <div className="border-t border-slate-100 pt-4">
+              <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-3">Performance je Version</p>
+              <div className="space-y-2">
+                {fwAnalytics.versions.slice(0, 5).map(v => {
+                  const maxTurns = Math.max(...fwAnalytics.versions.map(x => x.totalTurns), 1);
+                  return (
+                    <div key={v.version} className="flex items-center gap-3">
+                      <span className="text-xs font-bold text-slate-700 w-8 shrink-0">v{v.version}</span>
+                      <div className="flex-1 h-3 bg-slate-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-gradient-to-r from-violet-400 to-violet-600 rounded-full transition-all"
+                          style={{ width: `${Math.min(100, Math.round((v.totalTurns / maxTurns) * 100))}%` }} />
+                      </div>
+                      <div className="flex items-center gap-3 text-[11px] shrink-0">
+                        <span className="text-slate-500">{v.totalTurns} Turns</span>
+                        <span className="text-slate-500">{v.uniqueConversations} Chats</span>
+                        <span className="font-semibold text-violet-600">{v.avgConfidence}% Conf</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Evolution Log */}
+          {fwAnalytics.currentFramework?.evolutionLog && fwAnalytics.currentFramework.evolutionLog.length > 0 && (
+            <div className="border-t border-slate-100 pt-3 mt-3">
+              <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Evolution Log</p>
+              <div className="space-y-1">
+                {fwAnalytics.currentFramework.evolutionLog.slice(-3).reverse().map((entry, i) => (
+                  <p key={i} className="text-[11px] text-slate-500 truncate">
+                    <span className="text-violet-500 font-medium">{entry.split(':')[0]}:</span>
+                    {entry.split(':').slice(1).join(':')}
+                  </p>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Feedback Loop — Outcomes + Auto-Learning */}
+      {fwAnalytics && (
+        <div className="glass-card px-6 py-5 mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-base font-semibold text-slate-900">Feedback Loop</h2>
+              <p className="text-xs text-slate-400 mt-0.5">Gespräche → Ergebnisse → Auto-Learnings → Framework-Evolution</p>
+            </div>
+            <div className="flex items-center gap-2">
+              {fwAnalytics.feedbackLoop?.readyForEvolution && (
+                <span className="badge bg-amber-50 text-amber-600 border border-amber-100 flex items-center gap-1.5 animate-pulse">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500" /> Evolution bereit
+                </span>
+              )}
+              <button
+                onClick={() => triggerAutoLearn("analyze")}
+                disabled={autoLearnBusy}
+                className="px-3 py-1.5 text-xs font-medium rounded-lg bg-violet-50 text-violet-600 hover:bg-violet-100 disabled:opacity-50 transition-all"
+              >
+                {autoLearnBusy ? "Analysiert..." : "Auto-Analyse"}
+              </button>
+              {fwAnalytics.feedbackLoop?.unappliedInsights > 0 && (
+                <button
+                  onClick={() => triggerAutoLearn("evolve")}
+                  disabled={autoLearnBusy}
+                  className="px-3 py-1.5 text-xs font-medium rounded-lg bg-emerald-50 text-emerald-600 hover:bg-emerald-100 disabled:opacity-50 transition-all"
+                >
+                  Evolve
+                </button>
+              )}
+            </div>
+          </div>
+
+          {autoLearnResult && (
+            <div className="bg-slate-50 rounded-xl px-4 py-2.5 mb-4 text-xs text-slate-600">
+              {autoLearnResult}
+            </div>
+          )}
+
+          {/* Outcome Funnel */}
+          {fwAnalytics.outcomes && fwAnalytics.outcomes.total > 0 && (
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+              {[
+                { label: "Gespräche", value: fwAnalytics.outcomes.total, icon: "◉", color: "text-slate-600", bg: "bg-slate-50" },
+                { label: "Gebucht", value: fwAnalytics.outcomes.booked, icon: "◇", color: "text-emerald-600", bg: "bg-emerald-50" },
+                { label: "Abgelehnt", value: fwAnalytics.outcomes.rejected, icon: "✕", color: "text-red-500", bg: "bg-red-50" },
+                { label: "Ghosted", value: fwAnalytics.outcomes.ghosted, icon: "○", color: "text-slate-400", bg: "bg-slate-50" },
+                { label: "Eskaliert", value: fwAnalytics.outcomes.handedOff, icon: "▲", color: "text-amber-600", bg: "bg-amber-50" },
+              ].map(s => (
+                <div key={s.label} className={`${s.bg} rounded-xl px-3 py-2.5 flex items-center gap-2.5`}>
+                  <span className={`text-sm ${s.color}`}>{s.icon}</span>
+                  <div>
+                    <p className="text-lg font-bold text-slate-900">{s.value}</p>
+                    <p className="text-[10px] text-slate-400">{s.label}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Booking Rate per Framework Version */}
+          {fwAnalytics.versions.length > 0 && fwAnalytics.versions.some(v => Object.keys(v.outcomes || {}).length > 0) && (
+            <div className="border-t border-slate-100 pt-4 mb-4">
+              <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-3">Booking-Rate je Version</p>
+              <div className="space-y-2">
+                {fwAnalytics.versions.filter(v => Object.keys(v.outcomes || {}).length > 0).map(v => {
+                  const total = Object.values(v.outcomes).reduce((s, n) => s + n, 0);
+                  return (
+                    <div key={v.version} className="flex items-center gap-3">
+                      <span className="text-xs font-bold text-slate-700 w-8 shrink-0">v{v.version}</span>
+                      <div className="flex-1 h-3 bg-slate-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-gradient-to-r from-emerald-400 to-emerald-600 rounded-full transition-all"
+                          style={{ width: `${v.bookingRate}%` }} />
+                      </div>
+                      <div className="flex items-center gap-3 text-[11px] shrink-0">
+                        <span className="font-semibold text-emerald-600">{v.bookingRate}%</span>
+                        <span className="text-slate-400">{v.outcomes['booked'] ?? 0}/{total} Bookings</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Auto-Learning Pipeline Status */}
+          {fwAnalytics.feedbackLoop && (
+            <div className="border-t border-slate-100 pt-4">
+              <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-3">Auto-Learning Pipeline</p>
+              <div className="flex items-center gap-3 overflow-x-auto">
+                {[
+                  {
+                    step: "Gespräche",
+                    value: fwAnalytics.outcomes?.total ?? 0,
+                    color: "bg-slate-200",
+                    active: true,
+                  },
+                  {
+                    step: "Insights",
+                    value: fwAnalytics.feedbackLoop.totalAutoInsights,
+                    color: "bg-blue-200",
+                    active: fwAnalytics.feedbackLoop.totalAutoInsights > 0,
+                  },
+                  {
+                    step: "Wartend",
+                    value: fwAnalytics.feedbackLoop.unappliedInsights,
+                    color: "bg-amber-200",
+                    active: fwAnalytics.feedbackLoop.unappliedInsights > 0,
+                  },
+                  {
+                    step: "Applied",
+                    value: fwAnalytics.feedbackLoop.appliedInsights,
+                    color: "bg-emerald-200",
+                    active: fwAnalytics.feedbackLoop.appliedInsights > 0,
+                  },
+                ].map((s, i, arr) => (
+                  <div key={s.step} className="flex items-center gap-3">
+                    <div className={`rounded-xl px-4 py-2.5 text-center min-w-[80px] ${s.active ? s.color : "bg-slate-100"}`}>
+                      <p className={`text-lg font-bold ${s.active ? "text-slate-900" : "text-slate-300"}`}>{s.value}</p>
+                      <p className="text-[10px] text-slate-500">{s.step}</p>
+                    </div>
+                    {i < arr.length - 1 && (
+                      <span className="text-slate-300 text-sm">→</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
 
         {/* Recent Activity */}
@@ -239,6 +657,7 @@ export default function DashboardPage() {
           <h2 className="text-base font-semibold text-slate-900 mb-4">Schnellaktionen</h2>
           {[
             { href: "/dashboard/campaigns/new", icon: "◎", title: "Kampagne erstellen", desc: "CSV → Felder → Flow → Simulation → Start", highlight: true },
+            { href: "/dashboard/escalations",   icon: "⚠", title: "Eskalationen",      desc: `${(stats as Stats & { escalations?: { open: number } })?.escalations?.open ?? 0} offene Eskalationen` },
             { href: "/dashboard/simulation",    icon: "▶", title: "Simulation",         desc: "Live-Simulation der KI-Agent Pipeline" },
           ].map(a => (
             <Link key={a.title} href={a.href}
@@ -263,6 +682,38 @@ export default function DashboardPage() {
           ))}
         </div>
       </div>
+
+      {/* Campaign Execution Log */}
+      {execLogEntries.length > 0 && (
+        <div className="glass-card p-6 mb-8">
+          <div className="flex items-center justify-between mb-5">
+            <div>
+              <h2 className="text-base font-semibold text-slate-900">Execution Log</h2>
+              <p className="text-xs text-slate-400 mt-0.5">Letzte Scheduler- &amp; Worker-Aktionen</p>
+            </div>
+            <span className="badge bg-slate-50 text-slate-500 border border-slate-200 text-[10px]">
+              {execLogEntries.length} Einträge
+            </span>
+          </div>
+          <div className="space-y-1.5 max-h-[300px] overflow-y-auto">
+            {execLogEntries.map(e => (
+              <div key={e.id} className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-slate-50 transition-colors text-xs">
+                <span className={`text-base font-bold ${EXEC_EVENT_COLOR[e.event] ?? "text-slate-400"}`}>
+                  {EXEC_EVENT_ICON[e.event] ?? "·"}
+                </span>
+                <span className="font-semibold text-slate-700 w-20 truncate">{e.contactName || "—"}</span>
+                <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-mono text-[10px]">{e.event}</span>
+                {e.channel && <span className="text-slate-400">{CHANNEL_ICON[e.channel] ?? e.channel}</span>}
+                {e.stepIndex != null && <span className="text-slate-400">Step {e.stepIndex}</span>}
+                <span className="flex-1 text-slate-400 truncate text-[10px]">
+                  {e.details?.reason ? String(e.details.reason) : e.details?.error ? String(e.details.error) : ""}
+                </span>
+                <span className="text-[10px] text-slate-400 shrink-0">{timeAgo(e.createdAt)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Agent Grid */}
       <div className="glass-card p-6">

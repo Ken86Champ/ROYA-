@@ -31,6 +31,8 @@ export async function GET() {
     mailgunKey:        settings.mailgunKey        || process.env.MAILGUN_API_KEY      || "",
     mailgunDomain:     settings.mailgunDomain     || process.env.MAILGUN_DOMAIN       || "",
     mailgunFrom:       settings.mailgunFrom       || process.env.MAILGUN_FROM         || "",
+    googleCalendarClientId:     settings.googleCalendarClientId     || process.env.GOOGLE_CALENDAR_CLIENT_ID     || "",
+    googleCalendarClientSecret: settings.googleCalendarClientSecret || process.env.GOOGLE_CALENDAR_CLIENT_SECRET || "",
   };
   return NextResponse.json(merged);
 }
