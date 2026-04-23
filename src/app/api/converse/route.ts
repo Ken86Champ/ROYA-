@@ -12,6 +12,7 @@ import { DEFAULT_PERSONA } from '@/lib/types/conversation';
 import { SYSTEM_FRAMEWORKS } from '@/lib/framework-store';
 import { loadEvolvedFramework } from '@/lib/framework-evolution';
 import { supabase } from '@/lib/supabase';
+import { fetchCalendarSlotsForWriter } from '@/lib/calendar-slots';
 import type {
   ConversationContext,
   HistoryMessage,
@@ -172,6 +173,12 @@ export async function POST(req: NextRequest) {
       exampleMessages: fw.exampleMessages,
       customSystemPrompt,
       referenceDoc: referenceDoc || undefined,
+      currentDate: new Date().toLocaleDateString('de-CH', {
+        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+      }),
+      bookingLink: (persona as unknown as Record<string, unknown>).bookingLink as string | undefined,
+      availableSlots: undefined as string | undefined,
+      hasCalendar: undefined as boolean | undefined,
     };
     const strategistFramework = {
       strategistInstructions: fw.strategistInstructions,
@@ -214,6 +221,14 @@ export async function POST(req: NextRequest) {
       framework: strategistFramework,
       temperature: 0.3,
     });
+
+    // ── Fetch real calendar slots if booking action ──────────────────────────
+    if (strategy.nextAction === 'book_call') {
+      const calResult = await fetchCalendarSlotsForWriter();
+      writerFramework.availableSlots = calResult.formatted || undefined;
+      writerFramework.hasCalendar = calResult.connected;
+    }
+
     const phase2 = await writeAndCheck(context, message, interpretation, strategy, {
       framework: writerFramework,
       temperature,

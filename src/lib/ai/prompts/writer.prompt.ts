@@ -8,6 +8,10 @@ export interface WriterFrameworkOptions {
   exampleMessages?: { context: string; message: string }[];
   customSystemPrompt?: string;
   referenceDoc?: string;
+  currentDate?: string;       // e.g. "Donnerstag, 24. April 2026"
+  availableSlots?: string;    // formatted slot list from real calendar
+  hasCalendar?: boolean;      // whether calendar is connected at all
+  bookingLink?: string;       // fallback booking link
 }
 
 export function buildWriterAndCheckerPrompt(
@@ -17,6 +21,25 @@ export function buildWriterAndCheckerPrompt(
   let prompt = `Du bist ${persona.agentName} bei ${persona.companyName} und schreibst eine echte SMS-Antwort.
 
 ${persona.tone}`;
+
+  // ── Current date — ALWAYS injected, prevents past-date hallucinations ──
+  const currentDate = framework?.currentDate || new Date().toLocaleDateString('de-CH', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+  });
+  prompt += `\n\nHEUTE: ${currentDate}`;
+
+  // ── Booking guard — inject before any other rules ──
+  if (framework?.availableSlots) {
+    prompt += `\n\nVERFÜGBARE TERMINE (NUR diese vorschlagen — keine anderen erfinden):
+${framework.availableSlots}
+REGEL: Nenne ausschliesslich Termine aus dieser Liste. Kein Termin darf in der Vergangenheit liegen.`;
+  } else if (framework?.hasCalendar === false) {
+    const link = framework.bookingLink || persona.bookingLink || '';
+    prompt += `\n\nTERMINBUCHUNG: Kein Kalender verbunden. Schlage KEINE konkreten Daten oder Uhrzeiten vor.${link ? ` Teile stattdessen diesen Buchungslink: ${link}` : ' Frage nach einem allgemeinen Zeitraum (z.B. \"Welche Woche passt dir?\")'}`;
+  } else {
+    // Calendar connected but no slots fetched yet — safe default
+    prompt += `\n\nTERMINBUCHUNG: Schlage KEINE konkreten Daten vor, die heute (${currentDate}) oder früher liegen. Wenn du Termine nennen musst, nur Daten ab morgen.`;
+  }
 
   // Block 1: Unternehmen
   if (persona.industry) prompt += `\n\nBranche: ${persona.industry}`;
@@ -127,9 +150,15 @@ Wenn nötig: kürze oder überarbeite die Nachricht.`;
     prompt += `\n\nSPEZIELLE ANWEISUNGEN:\n${framework.customSystemPrompt}`;
   }
 
-  // ── Reference document (uploaded by user as style guide) ──
+  // ── Reference document — HIGHEST PRIORITY, overrides defaults ──
   if (framework?.referenceDoc) {
-    prompt += `\n\nREFERENZ-DOKUMENT (vom Nutzer hochgeladen — befolge diesen Kommunikationsstil exakt):\n${framework.referenceDoc}`;
+    prompt += `\n\n══════════════════════════════════════
+REFERENZ-DOKUMENT — ABSOLUT VERBINDLICH
+Dieses Dokument hat höchste Priorität und überschreibt alle anderen Stil-Vorgaben.
+Halte dich EXAKT an diesen Kommunikationsstil, diese Regeln und diese Sprache:
+══════════════════════════════════════
+${framework.referenceDoc}
+══════════════════════════════════════`;
   }
 
   prompt += `\n\nAntworte AUSSCHLIESSLICH mit validem JSON.`;

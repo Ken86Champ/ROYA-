@@ -31,6 +31,7 @@ import { maybeCreateHandoff } from '@/lib/conversation/handoff';
 import { loadEvolvedFramework } from '@/lib/framework-evolution';
 import { SYSTEM_FRAMEWORKS } from '@/lib/framework-store';
 import { supabase } from '@/lib/supabase';
+import { fetchCalendarSlotsForWriter } from '@/lib/calendar-slots';
 import type {
   OrchestratorResult,
   BusinessPersona,
@@ -113,6 +114,19 @@ export async function runConversationTurn(params: TurnParams): Promise<Orchestra
     temperature: fw.temperature,
   });
 
+  // ── Fetch calendar slots if booking action ────────────────────────────────
+  let availableSlots: string | undefined;
+  let hasCalendar: boolean | undefined;
+  if (strategy.nextAction === 'book_call') {
+    const calResult = await fetchCalendarSlotsForWriter();
+    availableSlots = calResult.formatted || undefined;
+    hasCalendar = calResult.connected;
+  }
+
+  const currentDate = new Date().toLocaleDateString('de-CH', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+  });
+
   // ── Phase 2: Write + Check ────────────────────────────────────────────────
   const phase2 = await writeAndCheck(context, params.incomingMessage, interpretation, strategy, {
     framework: {
@@ -120,6 +134,10 @@ export async function runConversationTurn(params: TurnParams): Promise<Orchestra
       rules: fw.rules,
       forbiddenPhrases: fw.forbiddenPhrases,
       exampleMessages: fw.exampleMessages,
+      currentDate,
+      availableSlots,
+      hasCalendar,
+      bookingLink: params.business?.bookingLink,
     },
     temperature: fw.temperature,
   });
