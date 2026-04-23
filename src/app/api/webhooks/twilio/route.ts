@@ -12,7 +12,106 @@ import {
   extractTwilioParams,
 } from '@/lib/compliance/webhook-signature';
 import { DEFAULT_PERSONA } from '@/lib/types/conversation';
+import type { BusinessPersona } from '@/lib/types/conversation';
 import { supabase } from '@/lib/supabase';
+
+// ── Load campaign persona + framework for a given contact number ─────────────
+async function loadCampaignContext(contact: string): Promise<{
+  business: BusinessPersona;
+  framework?: {
+    writerInstructions?: string;
+    strategistInstructions?: string;
+    interpreterInstructions?: string;
+    rules?: string[];
+    forbiddenPhrases?: string[];
+    temperature?: number;
+    exampleMessages?: { context: string; message: string }[];
+    referenceDoc?: string;
+  };
+  leadName?: string;
+} | null> {
+  try {
+    // 1. Find the most-recently-contacted campaign for this number
+    const { data: cc } = await supabase
+      .from('campaign_contacts')
+      .select('campaign_id, name')
+      .eq('contact', contact)
+      .order('last_contacted_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (!cc?.campaign_id) return null;
+
+    // 2. Load campaign row
+    const { data: campaign } = await supabase
+      .from('campaigns')
+      .select('*')
+      .eq('id', cc.campaign_id)
+      .single();
+
+    if (!campaign) return null;
+
+    // 3. Build BusinessPersona from campaign fields
+    const extra = (campaign.business_extra as Record<string, unknown>) ?? {};
+    const business: BusinessPersona = {
+      agentName:          campaign.agent_name || 'Roya',
+      companyName:        campaign.company_name || '',
+      offer:              campaign.offer || '',
+      goal:               campaign.cta || 'Telefontermin vereinbaren',
+      tone:               campaign.agent_tone || 'Professionell, freundlich, direkt',
+      language:           'de',
+      valueProp:          campaign.value_prop || undefined,
+      painPoint:          campaign.pain_point || undefined,
+      cta:                campaign.cta || undefined,
+      bookingLink:        campaign.booking_link || undefined,
+      industry:           (extra.industry as string) || undefined,
+      companyDescription: (extra.companyDescription as string) || undefined,
+      location:           (extra.location as string) || undefined,
+      usps:               (extra.usps as string) || undefined,
+      allServices:        (extra.allServices as string) || undefined,
+      priceRange:         (extra.priceRange as string) || undefined,
+      specialOffer:       (extra.specialOffer as string) || undefined,
+      leadRelationship:   (extra.leadRelationship as string) || undefined,
+      noConvertReason:    campaign.no_convert_reason || undefined,
+      afterCta:           (extra.afterCta as string) || undefined,
+      urgency:            (extra.urgency as string) || undefined,
+      objections:         (extra.objections as { objection: string; response: string }[]) || undefined,
+      doNotSay:           (extra.doNotSay as string) || undefined,
+      insiderKnowledge:   (extra.insiderKnowledge as string) || undefined,
+      exampleConversation:(extra.exampleConversation as string) || undefined,
+    };
+
+    // 4. Load prompt framework if campaign has one
+    if (!campaign.framework_id) {
+      return { business, leadName: cc.name };
+    }
+
+    const { data: fw } = await supabase
+      .from('prompt_frameworks')
+      .select('*')
+      .eq('id', campaign.framework_id)
+      .single();
+
+    if (!fw) return { business, leadName: cc.name };
+
+    return {
+      business,
+      leadName: cc.name,
+      framework: {
+        writerInstructions:      fw.writer_instructions || undefined,
+        strategistInstructions:  fw.strategist_instructions || undefined,
+        interpreterInstructions: fw.interpreter_instructions || undefined,
+        rules:                   (fw.rules as string[]) || [],
+        forbiddenPhrases:        (fw.forbidden_phrases as string[]) || [],
+        temperature:             fw.temperature ?? 0.5,
+        exampleMessages:         (fw.example_messages as { context: string; message: string }[]) || [],
+      },
+    };
+  } catch (err) {
+    console.error('[ROYA] loadCampaignContext failed:', err);
+    return null;
+  }
+}
 
 // In-process dedup (fast path) + Supabase dedup (persistent path)
 const _processing = new Set<string>();
@@ -138,13 +237,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // This prevents Twilio from retrying due to slow AI processing (3 LLM calls)
     after(async () => {
       try {
+        const campaignCtx = await loadCampaignContext(contact);
         const result = await runConversationTurn({
           conversationId:  `twilio_${contact}`,
-          leadName:        contact,
+          leadName:        campaignCtx?.leadName ?? contact,
           channel,
           incomingMessage: msgBody,
           leadContact:     contact,
-          business:        DEFAULT_PERSONA,
+          business:        campaignCtx?.business ?? DEFAULT_PERSONA,
+          framework:       campaignCtx?.framework,
         });
 
         if (result.action === 'reply' && result.reply) {

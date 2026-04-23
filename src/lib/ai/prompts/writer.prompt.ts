@@ -29,16 +29,19 @@ ${persona.tone}`;
   prompt += `\n\nHEUTE: ${currentDate}`;
 
   // ── Booking guard — inject before any other rules ──
+  // ALL appointments are phone/video calls — never physical meetings, never ask for Ort
   if (framework?.availableSlots) {
-    prompt += `\n\nVERFÜGBARE TERMINE (NUR diese vorschlagen — keine anderen erfinden):
+    prompt += `\n\nTERMINBUCHUNG — TELEFONTERMIN/ANRUF:
+Alle Termine sind Telefon- oder Videoanrufe. Frage NIEMALS nach einem Ort oder Treffpunkt.
+Verfügbare Zeiten (NUR diese vorschlagen — keine anderen erfinden):
 ${framework.availableSlots}
 REGEL: Nenne ausschliesslich Termine aus dieser Liste. Kein Termin darf in der Vergangenheit liegen.`;
   } else if (framework?.hasCalendar === false) {
     const link = framework.bookingLink || persona.bookingLink || '';
-    prompt += `\n\nTERMINBUCHUNG: Kein Kalender verbunden. Schlage KEINE konkreten Daten oder Uhrzeiten vor.${link ? ` Teile stattdessen diesen Buchungslink: ${link}` : ' Frage nach einem allgemeinen Zeitraum (z.B. \"Welche Woche passt dir?\")'}`;
+    prompt += `\n\nTERMINBUCHUNG — TELEFONTERMIN/ANRUF: Alle Termine sind Telefon- oder Videoanrufe. Frage NIEMALS nach einem Ort oder Treffpunkt. Kein Kalender verbunden. Schlage KEINE konkreten Daten oder Uhrzeiten vor.${link ? ` Teile stattdessen diesen Buchungslink: ${link}` : ' Frage nach einem allgemeinen Zeitraum (z.B. "Welche Woche passt dir für einen kurzen Anruf?")'}`;
   } else {
     // Calendar connected but no slots fetched yet — safe default
-    prompt += `\n\nTERMINBUCHUNG: Schlage KEINE konkreten Daten vor, die heute (${currentDate}) oder früher liegen. Wenn du Termine nennen musst, nur Daten ab morgen.`;
+    prompt += `\n\nTERMINBUCHUNG — TELEFONTERMIN/ANRUF: Alle Termine sind Telefon- oder Videoanrufe. Frage NIEMALS nach einem Ort oder Treffpunkt. Schlage KEINE konkreten Daten vor, die heute (${currentDate}) oder früher liegen. Wenn du Termine nennen musst, nur Daten ab morgen.`;
   }
 
   // Block 1: Unternehmen

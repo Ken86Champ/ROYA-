@@ -45,32 +45,70 @@ export interface TurnParams {
   incomingMessage: string;
   leadContact: string;
   business?: BusinessPersona;
+  framework?: {
+    writerInstructions?: string;
+    strategistInstructions?: string;
+    interpreterInstructions?: string;
+    rules?: string[];
+    forbiddenPhrases?: string[];
+    temperature?: number;
+    exampleMessages?: { context: string; message: string }[];
+    referenceDoc?: string;
+  };
 }
 
 export async function runConversationTurn(params: TurnParams): Promise<OrchestratorResult> {
-  // ── Phase 0: Load evolved framework ───────────────────────────────────────
-  const evolved = await loadEvolvedFramework();
-  const royaStandard = SYSTEM_FRAMEWORKS[0];
-  const fw = evolved
-    ? {
-        writerInstructions: evolved.writerInstructions,
-        strategistInstructions: evolved.strategistInstructions,
-        interpreterInstructions: evolved.interpreterInstructions,
-        rules: evolved.rules,
-        forbiddenPhrases: evolved.forbiddenPhrases,
-        temperature: evolved.temperature,
-        exampleMessages: evolved.exampleMessages,
-      }
-    : {
-        writerInstructions: royaStandard.writerInstructions,
-        strategistInstructions: royaStandard.strategistInstructions,
-        interpreterInstructions: royaStandard.interpreterInstructions,
-        rules: royaStandard.rules,
-        forbiddenPhrases: royaStandard.forbiddenPhrases,
-        temperature: royaStandard.temperature,
-        exampleMessages: royaStandard.exampleMessages,
-      };
-  const frameworkVersion = evolved?.version ?? 0;
+  // ── Phase 0: Load framework — campaign-specific → evolved → ROYA Standard ──
+  let fw: {
+    writerInstructions: string;
+    strategistInstructions: string;
+    interpreterInstructions: string;
+    rules: string[];
+    forbiddenPhrases: string[];
+    temperature: number;
+    exampleMessages: { context: string; message: string }[];
+    referenceDoc?: string;
+  };
+  let frameworkVersion: number;
+
+  if (params.framework?.writerInstructions) {
+    // Campaign-specific framework takes highest priority
+    const royaStandard = SYSTEM_FRAMEWORKS[0];
+    fw = {
+      writerInstructions: params.framework.writerInstructions,
+      strategistInstructions: params.framework.strategistInstructions ?? royaStandard.strategistInstructions,
+      interpreterInstructions: params.framework.interpreterInstructions ?? royaStandard.interpreterInstructions,
+      rules: params.framework.rules ?? royaStandard.rules,
+      forbiddenPhrases: params.framework.forbiddenPhrases ?? royaStandard.forbiddenPhrases,
+      temperature: params.framework.temperature ?? royaStandard.temperature,
+      exampleMessages: params.framework.exampleMessages ?? royaStandard.exampleMessages,
+      referenceDoc: params.framework.referenceDoc,
+    };
+    frameworkVersion = -1; // campaign-specific, not from evolution
+  } else {
+    const evolved = await loadEvolvedFramework();
+    const royaStandard = SYSTEM_FRAMEWORKS[0];
+    fw = evolved
+      ? {
+          writerInstructions: evolved.writerInstructions,
+          strategistInstructions: evolved.strategistInstructions,
+          interpreterInstructions: evolved.interpreterInstructions,
+          rules: evolved.rules,
+          forbiddenPhrases: evolved.forbiddenPhrases,
+          temperature: evolved.temperature,
+          exampleMessages: evolved.exampleMessages,
+        }
+      : {
+          writerInstructions: royaStandard.writerInstructions,
+          strategistInstructions: royaStandard.strategistInstructions,
+          interpreterInstructions: royaStandard.interpreterInstructions,
+          rules: royaStandard.rules,
+          forbiddenPhrases: royaStandard.forbiddenPhrases,
+          temperature: royaStandard.temperature,
+          exampleMessages: royaStandard.exampleMessages,
+        };
+    frameworkVersion = evolved?.version ?? 0;
+  }
 
   // ── Load context (Supabase or Twilio fallback) ────────────────────────────
   let context = await getConversationContext({
@@ -138,6 +176,7 @@ export async function runConversationTurn(params: TurnParams): Promise<Orchestra
       availableSlots,
       hasCalendar,
       bookingLink: params.business?.bookingLink,
+      referenceDoc: fw.referenceDoc,
     },
     temperature: fw.temperature,
   });
