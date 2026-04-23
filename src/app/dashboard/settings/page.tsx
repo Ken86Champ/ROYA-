@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 
 const inp = "w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-slate-800 text-sm placeholder-slate-300 focus:outline-none focus:border-violet-400 transition-colors";
@@ -87,6 +87,14 @@ interface SystemStatus {
 }
 
 export default function SettingsPage() {
+  return (
+    <Suspense>
+      <SettingsPageContent />
+    </Suspense>
+  );
+}
+
+function SettingsPageContent() {
   const [saved, setSaved] = useState(false);
   const [activeTab, setActiveTab] = useState<"integrations" | "calendars" | "billing" | "agents" | "system">("integrations");
   const [sysStatus, setSysStatus] = useState<SystemStatus | null>(null);

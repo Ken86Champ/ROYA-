@@ -6,7 +6,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { buildInterpreterPrompt, buildInterpreterUserPrompt } from './prompts/interpreter.prompt';
 import type { InterpreterFrameworkOptions } from './prompts/interpreter.prompt';
-import type { MessageInterpretation, ConversationContext } from '@/lib/types/conversation';
+import type { MessageInterpretation, ConversationContext, EmotionalTone, MicroIntent, ConversationState } from '@/lib/types/conversation';
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -69,14 +69,14 @@ export async function interpretMessage(
     }
 
     return {
-      explicitMeaning: parsed.explicitMeaning || '',
-      implicitMeaning: parsed.implicitMeaning || '',
-      emotionalTone: parsed.emotionalTone || 'neutral',
-      microIntent: parsed.microIntent || 'other',
-      likelyNeed: parsed.likelyNeed || '',
-      hiddenConcern: parsed.hiddenConcern || '',
-      stateRecommendation: parsed.stateRecommendation || 'lightly_engaged',
-      riskFlags: Array.isArray(parsed.riskFlags) ? parsed.riskFlags : [],
+      explicitMeaning: (parsed.explicitMeaning as string) || '',
+      implicitMeaning: (parsed.implicitMeaning as string) || '',
+      emotionalTone: ((parsed.emotionalTone as EmotionalTone) || 'neutral') as EmotionalTone,
+      microIntent: ((parsed.microIntent as MicroIntent) || 'other') as MicroIntent,
+      likelyNeed: (parsed.likelyNeed as string) || '',
+      hiddenConcern: (parsed.hiddenConcern as string) || '',
+      stateRecommendation: ((parsed.stateRecommendation as ConversationState) || 'lightly_engaged') as ConversationState,
+      riskFlags: Array.isArray(parsed.riskFlags) ? parsed.riskFlags as string[] : [],
     };
   } catch (err) {
     console.error('[ROYA] Interpreter failed:', err);

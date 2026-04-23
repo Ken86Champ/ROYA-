@@ -6,7 +6,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { buildStrategistPrompt, buildStrategistUserPrompt } from './prompts/strategist.prompt';
 import type { StrategistFrameworkOptions } from './prompts/strategist.prompt';
-import type { StrategyDecision, ConversationContext, MessageInterpretation } from '@/lib/types/conversation';
+import type { StrategyDecision, ConversationContext, MessageInterpretation, NextAction } from '@/lib/types/conversation';
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -90,12 +90,12 @@ export async function decideStrategy(
     }
 
     return {
-      primaryGoal: parsed.primaryGoal || '',
-      nextAction: parsed.nextAction || 'ask_question',
-      angle: parsed.angle || '',
-      thingsToAvoid: Array.isArray(parsed.thingsToAvoid) ? parsed.thingsToAvoid : [],
-      desiredTone: parsed.desiredTone || 'neutral',
-      maxLength: parsed.maxLength || 'short',
+      primaryGoal: (parsed.primaryGoal as string) || '',
+      nextAction: ((parsed.nextAction as NextAction) || 'ask_question') as NextAction,
+      angle: (parsed.angle as string) || '',
+      thingsToAvoid: Array.isArray(parsed.thingsToAvoid) ? parsed.thingsToAvoid as string[] : [],
+      desiredTone: (parsed.desiredTone as string) || 'neutral',
+      maxLength: ((parsed.maxLength as 'short' | 'medium') || 'short') as 'short' | 'medium',
     };
   } catch (err) {
     console.error('[ROYA] Strategist failed:', err);

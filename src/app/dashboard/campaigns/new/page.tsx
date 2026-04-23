@@ -255,7 +255,7 @@ export default function NewCampaignPage() {
       const rawChannel = (obj.channel || "").toLowerCase();
       const channel = ["email", "sms", "whatsapp"].includes(rawChannel) ? rawChannel
         : contact.includes("@") ? "email" : "sms";
-      return { name, contact, channel, ...obj };
+      return { name, contact, channel, ...obj } as { name: string; contact: string; channel: string } & Record<string, string>;
     }).filter(c => c.contact);
   };
 

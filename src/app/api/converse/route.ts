@@ -242,7 +242,7 @@ export async function POST(req: NextRequest) {
       action: 'reply',
       confidence: phase2.confidence,
       state: currentState,
-    }]).then(() => {}).catch(() => {});
+    }]).then(() => {}, () => {});
 
     // Track outcome for terminal states or terminal intents (non-blocking)
     const terminalStates = ['dead', 'not_now', 'handoff_required', 'qualified_ready'];
@@ -266,7 +266,7 @@ export async function POST(req: NextRequest) {
         final_state: currentState,
         channel: 'sms',
         lead_name: leadName,
-      }]).then(() => {}).catch(() => {});
+      }]).then(() => {}, () => {});
     }
 
     return NextResponse.json({

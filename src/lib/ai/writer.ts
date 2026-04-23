@@ -68,10 +68,10 @@ export async function writeAndCheck(
     }
 
     return {
-      finalMessage: validateResponse(parsed.finalMessage || '', options?.framework),
+      finalMessage: validateResponse((parsed.finalMessage as string) || '', options?.framework),
       confidence: Number(parsed.confidence) || 70,
       shouldHandoff: Boolean(parsed.shouldHandoff),
-      handoffReason: parsed.handoffReason || undefined,
+      handoffReason: (parsed.handoffReason as string) || undefined,
     };
   } catch (err) {
     const errStr = String(err);
