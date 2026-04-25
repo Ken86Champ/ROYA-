@@ -11,6 +11,7 @@ const navItems = [
   { href: "/dashboard/escalations",  label: "Eskalationen",   icon: "⚠" },
   { href: "/dashboard/clients",      label: "Endkunden",      icon: "◈" },
   { href: "/dashboard/appointments", label: "Termine",        icon: "◇" },
+  { href: "/dashboard/setup",         label: "Agent Setup",    icon: "✦" },
   { href: "/dashboard/simulation",   label: "Simulation",     icon: "▷" },
   { href: "/dashboard/settings",     label: "Einstellungen",  icon: "⚙" },
 ];
