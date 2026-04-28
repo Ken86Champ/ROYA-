@@ -82,8 +82,16 @@ async function loadCampaignContext(contact: string): Promise<{
     };
 
     // 4. Load prompt framework if campaign has one
+    // Load saved system prompt from agency_settings
+    const { data: agencySettings } = await supabase
+      .from('agency_settings')
+      .select('config')
+      .eq('agency_id', campaign.agency_id || 'demo-agency')
+      .single();
+    const savedSystemPrompt = (agencySettings?.config as Record<string, unknown>)?.systemPrompt as string | undefined;
+
     if (!campaign.framework_id) {
-      return { business, leadName: cc.name };
+      return { business, leadName: cc.name, framework: savedSystemPrompt ? { systemPrompt: savedSystemPrompt } : undefined };
     }
 
     const { data: fw } = await supabase
@@ -92,7 +100,7 @@ async function loadCampaignContext(contact: string): Promise<{
       .eq('id', campaign.framework_id)
       .single();
 
-    if (!fw) return { business, leadName: cc.name };
+    if (!fw) return { business, leadName: cc.name, framework: savedSystemPrompt ? { systemPrompt: savedSystemPrompt } : undefined };
 
     return {
       business,
@@ -105,6 +113,7 @@ async function loadCampaignContext(contact: string): Promise<{
         forbiddenPhrases:        (fw.forbidden_phrases as string[]) || [],
         temperature:             fw.temperature ?? 0.5,
         exampleMessages:         (fw.example_messages as { context: string; message: string }[]) || [],
+        systemPrompt:            savedSystemPrompt || undefined,
       },
     };
   } catch (err) {

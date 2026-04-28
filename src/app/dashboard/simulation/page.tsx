@@ -91,13 +91,15 @@ export default function SimulationPage() {
         }),
       });
       const data = await res.json();
-      const opener: string = data.opener || `Hallo ${setup.leadName}, hier ${setup.agentName} von ${setup.companyName}. Kurze Frage — ist das Thema ${setup.offer} noch aktuell für dich?`;
+      const cleanOffer = setup.offer && setup.offer.length < 60 && !setup.offer.toLowerCase().includes('reaktivierung') && !setup.offer.includes('—') && !setup.offer.includes('–') && !setup.offer.match(/\d{4}/) ? setup.offer : null;
+      const opener: string = data.opener || `Hallo ${setup.leadName}, hier ${setup.agentName} von ${setup.companyName}. ${cleanOffer ? `Wir hatten vor einer Weile mal Kontakt bezüglich dem ${cleanOffer}.` : 'Wir hatten vor einer Weile schon mal Kontakt.'} Ist das Thema aktuell noch relevant bei dir?`;
       setAgentTyping(false);
       addMsg("agent", opener);
       setHistory([{ role: "agent", body: opener }]);
     } catch {
       setAgentTyping(false);
-      const fallback = `Hallo ${setup.leadName}, hier ${setup.agentName} von ${setup.companyName}. Kurze Frage — ist das Thema ${setup.offer} noch aktuell?`;
+      const cleanOffer2 = setup.offer && setup.offer.length < 60 && !setup.offer.toLowerCase().includes('reaktivierung') && !setup.offer.includes('—') && !setup.offer.includes('–') && !setup.offer.match(/\d{4}/) ? setup.offer : null;
+      const fallback = `Hallo ${setup.leadName}, hier ${setup.agentName} von ${setup.companyName}. ${cleanOffer2 ? `Wir hatten vor einer Weile mal Kontakt bezüglich dem ${cleanOffer2}.` : 'Wir hatten vor einer Weile schon mal Kontakt.'} Ist das Thema aktuell noch relevant bei dir?`;
       addMsg("agent", fallback);
       setHistory([{ role: "agent", body: fallback }]);
     }

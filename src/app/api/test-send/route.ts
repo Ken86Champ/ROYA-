@@ -32,7 +32,9 @@ export async function POST(req: NextRequest) {
     const toNormalized = channel === "whatsapp"
       ? `whatsapp:${normalizePhone(to)}`
       : normalizePhone(to);
-    const fromNumber = channel === "whatsapp" ? `whatsapp:${from}` : from;
+    // Strip any existing whatsapp: prefix before adding it back, to avoid double-prefixing
+    const fromStripped = from.replace(/^whatsapp:/i, '');
+    const fromNumber = channel === "whatsapp" ? `whatsapp:${fromStripped}` : from;
 
     const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
 

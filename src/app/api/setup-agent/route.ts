@@ -153,14 +153,13 @@ SETUP_COMPLETE
   "exampleConversation": "Kurzes Gesprächsbeispiel im richtigen Stil",
   "language": "du|sie",
   "tone": "Vollständige Tonalitätsbeschreibung",
-  "writerInstructions": "Vollständige, operative Schreibanweisungen für den Writer-Agent. Mindestens 200 Wörter. Muss Stil, Format, verbotene Phrasen, bevorzugte Ausdrücke, Länge und konkrete Beispielsätze enthalten.",
-  "strategistInstructions": "Vollständige Strategie-Anweisungen für den Strategist-Agent. Mindestens 150 Wörter. Enthält: wann pitchen, wann zurückhalten, Einwand-Eskalationslogik, wann Mensch übernimmt.",
-  "interpreterInstructions": "Anweisungen für den Interpreter-Agent: welche Signale besondere Bedeutung haben, branchenspezifische Codes, Vorsicht-Signale.",
+  "writerInstructions": "Operative Schreibanweisungen: Stil, Format, verbotene Phrasen, bevorzugte Ausdrücke, Länge, 2-3 Beispielsätze.",
+  "strategistInstructions": "Strategie: wann pitchen, wann zurückhalten, Einwand-Logik, wann Mensch übernimmt.",
+  "interpreterInstructions": "Welche Signale besondere Bedeutung haben, Vorsicht-Signale.",
   "forbiddenPhrases": ["Liste verbotener Phrasen"],
-  "rules": ["no_emoji wenn keine Emojis", "no_dashes wenn gewünscht", "max_2_sentences wenn kurz gewünscht"],
+  "rules": ["no_emoji wenn keine Emojis", "max_2_sentences wenn kurz gewünscht"],
   "objections": [
-    {"objection": "Einwand 1", "response": "Antwort 1"},
-    {"objection": "Einwand 2", "response": "Antwort 2"}
+    {"objection": "Einwand 1", "response": "Antwort 1"}
   ],
   "escalationTriggers": "Wann und wie Mensch übernimmt",
   "temperature": 0.7
@@ -189,7 +188,7 @@ export async function POST(req: NextRequest) {
 
     const response = await client.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 1500,
+      max_tokens: 6000,
       system: SETUP_SYSTEM_PROMPT,
       messages,
     });
@@ -199,14 +198,74 @@ export async function POST(req: NextRequest) {
     // Detect completion signal
     const completionIdx = raw.indexOf('SETUP_COMPLETE');
     if (completionIdx !== -1) {
-      const jsonMatch = raw.slice(completionIdx).match(/```json\s*([\s\S]*?)```/);
+      const afterMarker = raw.slice(completionIdx);
+      // Try strict JSON block first
+      const jsonMatch = afterMarker.match(/```json\s*([\s\S]*?)```/);
+      // Fallback: extract from opening { to end of string (handles truncated JSON)
+      const openBrace = afterMarker.indexOf('{');
+
+      let setupData: Record<string, unknown> | null = null;
+
       if (jsonMatch) {
+        try { setupData = JSON.parse(jsonMatch[1]); } catch { /* try fallback */ }
+      }
+      if (!setupData && openBrace !== -1) {
+        // Try to parse progressively shorter substrings until valid JSON
+        let jsonStr = afterMarker.slice(openBrace);
+        // Close any open JSON by appending missing closing braces
         try {
-          const setupData = JSON.parse(jsonMatch[1]);
-          return NextResponse.json({ reply: raw, isComplete: true, setupData });
+          setupData = JSON.parse(jsonStr);
         } catch {
-          // JSON parse failed — return raw but not marked complete
+          // Count open/close braces and try to close it
+          let opens = 0;
+          let lastValidIdx = 0;
+          for (let i = 0; i < jsonStr.length; i++) {
+            if (jsonStr[i] === '{') opens++;
+            else if (jsonStr[i] === '}') { opens--; if (opens === 0) { lastValidIdx = i; break; } }
+          }
+          if (lastValidIdx > 0) {
+            try { setupData = JSON.parse(jsonStr.slice(0, lastValidIdx + 1)); } catch { /* give up */ }
+          } else {
+            // Truncated — close open string/object
+            const trimmed = jsonStr.trimEnd().replace(/,\s*$/, '');
+            try { setupData = JSON.parse(trimmed + '}}'); } catch { /* give up */ }
+          }
         }
+      }
+
+      if (setupData && setupData.companyName) {
+        // Build systemPrompt server-side from parsed data
+        const d = setupData;
+        const lang = d.language === 'sie' ? 'Sie' : 'du';
+        const objectionLines = Array.isArray(d.objections)
+          ? (d.objections as {objection:string;response:string}[]).map(o => `- "${o.objection}" → ${o.response}`).join('\n')
+          : '';
+        setupData.systemPrompt = [
+          `## 1. COMPANY PROFILE`,
+          `${d.companyName} | ${d.industry || ''}. Angebot: ${d.offer || ''}. Alle Services: ${d.allServices || ''}.`,
+          `Zielgruppe: ${d.targetAudience || ''}. Pain Point: ${d.painPoint || ''}.`,
+          `USP/Value Prop: ${d.valueProp || ''}. ${d.priceRange ? `Preisrahmen: ${d.priceRange}.` : ''} ${d.specialOffer ? `Sonderangebot: ${d.specialOffer}.` : ''}`,
+          `Warum bisher nicht gekauft: ${d.noConvertReason || ''}.`,
+          '',
+          `## 2. KNOWLEDGE & COMMUNICATION RULES`,
+          `Agent-Name: ${d.agentName || 'Roya'} (${d.agentRole || ''}). Sprache: ${lang}. Ton: ${d.tone || ''}.`,
+          d.doNotSay ? `Darf NICHT sagen: ${d.doNotSay}.` : '',
+          d.insiderKnowledge ? `Insider-Wissen: ${d.insiderKnowledge}.` : '',
+          Array.isArray(d.forbiddenPhrases) && (d.forbiddenPhrases as string[]).length > 0 ? `Verbotene Phrasen: ${(d.forbiddenPhrases as string[]).join(', ')}.` : '',
+          objectionLines ? `Einwand-Antworten:\n${objectionLines}` : '',
+          d.writerInstructions ? `\nSchreib-Stil: ${d.writerInstructions}` : '',
+          '',
+          `## 3. ESCALATION & DECISION LOGIC`,
+          `Ziel jedes Gesprächs: ${d.cta || 'Terminbuchung'}. Nach CTA: ${d.afterCta || ''}.`,
+          `Wenn Interesse → Termin buchen (${d.bookingType || 'phone'}).`,
+          `Wenn Einwand → behandeln und weiterführen.`,
+          `Wenn klare Ablehnung → freundlich abschliessen, Tür offen lassen.`,
+          `Wenn unbekannte Frage → ehrlich begrenzen, nicht improvisieren.`,
+          d.escalationTriggers ? `Mensch übernimmt wenn: ${d.escalationTriggers}.` : '',
+          d.urgency ? `Dringlichkeit: ${d.urgency}.` : '',
+        ].filter(Boolean).join('\n');
+
+        return NextResponse.json({ reply: raw, isComplete: true, setupData });
       }
     }
 

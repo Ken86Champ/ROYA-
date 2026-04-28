@@ -100,18 +100,20 @@ export async function POST(req: NextRequest) {
     // Truncate very long documents
     const docText = text.slice(0, 20000);
 
-    const response = await client.messages.create({
+    const stream = client.messages.stream({
       model: 'claude-sonnet-4-6',
       max_tokens: 2000,
-      temperature: 0.3,
       system: EXTRACTION_PROMPT,
       messages: [{
         role: 'user',
         content: `Analysiere dieses Dokument und extrahiere Stilregeln:\n\n---\n${docText}\n---`,
       }],
     });
+    const response = await stream.finalMessage();
 
-    const raw = (response.content[0] as { text: string }).text.trim();
+    const textBlock = response.content.find(b => b.type === 'text') as { text: string } | undefined;
+    const raw = (textBlock?.text ?? '').trim();
+    if (!raw) throw new Error('Keine Antwort von Claude erhalten');
     // Robust JSON extraction — Claude sometimes returns markdown-wrapped or slightly malformed JSON
     let json = raw.replace(/^```json?\s*\n?/, '').replace(/\n?\s*```$/, '');
     // Extract the outermost { ... } if there's surrounding text
@@ -136,16 +138,17 @@ export async function POST(req: NextRequest) {
       } catch {
         // Last resort: ask Claude to fix its own JSON
         console.warn('[ROYA] Repair failed, asking Claude to fix JSON...');
-        const fixResponse = await client.messages.create({
+        const fixStream = client.messages.stream({
           model: 'claude-sonnet-4-6',
           max_tokens: 2500,
-          temperature: 0,
           messages: [{
             role: 'user',
             content: `Fix the following malformed JSON. Return ONLY valid JSON, nothing else:\n\n${json}`,
           }],
         });
-        const fixRaw = (fixResponse.content[0] as { text: string }).text.trim();
+        const fixResponse = await fixStream.finalMessage();
+        const fixTextBlock = fixResponse.content.find(b => b.type === 'text') as { text: string } | undefined;
+        const fixRaw = (fixTextBlock?.text ?? '').trim();
         const fixJson = fixRaw.replace(/^```json?\s*\n?/, '').replace(/\n?\s*```$/, '');
         const fixBraceStart = fixJson.indexOf('{');
         const fixBraceEnd = fixJson.lastIndexOf('}');

@@ -64,8 +64,10 @@ function SetupPageInner() {
   const [isComplete, setIsComplete] = useState(false);
   const [setupData, setSetupData] = useState<SetupData | null>(null);
   const [saving, setSaving] = useState(false);
-  const [savedId, setSavedId] = useState<string | null>(null);
-  const [frameworkName, setFrameworkName] = useState("");
+  const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [existingSetup, setExistingSetup] = useState<{ companyName: string; agentName: string } | null>(null);
+  const [checkingExisting, setCheckingExisting] = useState(true);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -73,6 +75,55 @@ function SetupPageInner() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, thinking]);
+
+  // ── Check for existing setup in DB + restore from localStorage ────────────
+  useEffect(() => {
+    // 1. Restore in-progress chat from localStorage
+    try {
+      const saved = localStorage.getItem('roya_setup_session');
+      if (saved) {
+        const session = JSON.parse(saved);
+        if (session.messages?.length > 0) {
+          setMessages(session.messages);
+          setHistory(session.history || []);
+          setCurrentBlock(session.currentBlock || 1);
+          setStarted(true);
+          if (session.isComplete && session.setupData) {
+            setIsComplete(true);
+            setSetupData(session.setupData);
+          }
+          setCheckingExisting(false);
+          return;
+        }
+      }
+    } catch { /* ignore */ }
+
+    // 2. Check if setup already saved in DB
+    fetch('/api/settings/agent-config')
+      .then(r => r.json())
+      .then((cfg: Record<string, unknown>) => {
+        const persona = cfg?.persona as Record<string, string> | undefined;
+        const hasSetup = !!(cfg?.activeFrameworkId || persona?.companyName);
+        if (hasSetup && persona?.companyName) {
+          setExistingSetup({
+            companyName: persona.companyName,
+            agentName: persona.agentName || 'Roya',
+          });
+        }
+        setCheckingExisting(false);
+      })
+      .catch(() => setCheckingExisting(false));
+  }, []);
+
+  // ── Persist chat session to localStorage ──────────────────────────────────
+  useEffect(() => {
+    if (!started || messages.length === 0) return;
+    try {
+      localStorage.setItem('roya_setup_session', JSON.stringify({
+        messages, history, currentBlock, isComplete, setupData,
+      }));
+    } catch { /* ignore */ }
+  }, [messages, history, currentBlock, isComplete, setupData, started]);
 
   function addMsg(role: "assistant" | "user", text: string) {
     setMessages(prev => [...prev, { id: crypto.randomUUID(), role, text }]);
@@ -143,7 +194,6 @@ function SetupPageInner() {
       if (data.isComplete && data.setupData) {
         setIsComplete(true);
         setSetupData(data.setupData);
-        setFrameworkName(`${data.setupData.companyName || ""} — Setup`.trim());
       }
     } catch {
       setThinking(false);
@@ -156,21 +206,42 @@ function SetupPageInner() {
   async function saveSetup() {
     if (!setupData) return;
     setSaving(true);
+    setSaveError("");
     try {
+      const frameworkName = `${setupData.companyName || "Unbekannt"} — Setup`;
       const res = await fetch("/api/setup-agent/save", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ setupData, frameworkName, campaignId }),
       });
-      const data = await res.json();
-      if (data.frameworkId) {
-        setSavedId(data.frameworkId);
+      const json = await res.json();
+      if (!res.ok || json.error) {
+        const msg = json.error || `HTTP ${res.status}`;
+        console.error("Save failed:", msg);
+        setSaveError(msg);
+        return;
       }
+      setSaved(true);
+      try { localStorage.removeItem('roya_setup_session'); } catch { /* ignore */ }
+      setTimeout(() => router.push("/dashboard/campaigns/new"), 1200);
     } catch (err) {
       console.error("Save failed:", err);
+      setSaveError(String(err));
     } finally {
       setSaving(false);
     }
+  }
+
+  function clearAndRestart() {
+    try { localStorage.removeItem('roya_setup_session'); } catch { /* ignore */ }
+    setMessages([]);
+    setHistory([]);
+    setCurrentBlock(1);
+    setIsComplete(false);
+    setSetupData(null);
+    setSaved(false);
+    setStarted(false);
+    setExistingSetup(null);
   }
 
   // ─── Render ───────────────────────────────────────────────────────────────
@@ -250,34 +321,62 @@ function SetupPageInner() {
         {!started ? (
           /* Start screen */
           <div className="flex-1 flex flex-col items-center justify-center px-8">
-            <div className="max-w-lg w-full text-center space-y-6">
-              <div className="w-16 h-16 rounded-2xl bg-violet-600 flex items-center justify-center mx-auto shadow-lg shadow-violet-200">
-                <span className="text-white text-2xl font-bold">R</span>
+            {checkingExisting ? (
+              <div className="text-slate-400 text-sm">Laden…</div>
+            ) : existingSetup ? (
+              /* Existing setup detected */
+              <div className="max-w-lg w-full text-center space-y-6">
+                <div className="w-16 h-16 rounded-2xl bg-emerald-500 flex items-center justify-center mx-auto shadow-lg shadow-emerald-200">
+                  <span className="text-white text-2xl">✓</span>
+                </div>
+                <div>
+                  <h1 className="text-2xl font-bold text-slate-900">Setup aktiv</h1>
+                  <p className="text-slate-500 mt-2 text-sm">
+                    Agent <strong>{existingSetup.agentName}</strong> ist für <strong>{existingSetup.companyName}</strong> konfiguriert.
+                  </p>
+                </div>
+                <div className="flex flex-col gap-3">
+                  <button onClick={() => router.push("/dashboard/campaigns/new")}
+                    className="w-full py-4 rounded-2xl bg-violet-600 text-white font-semibold text-sm hover:bg-violet-700 transition-all shadow-lg shadow-violet-200">
+                    Neue Kampagne erstellen →
+                  </button>
+                  <button onClick={clearAndRestart}
+                    className="w-full py-3 rounded-2xl border border-slate-200 text-slate-500 text-sm hover:bg-slate-50 transition-all">
+                    Setup neu durchführen
+                  </button>
+                </div>
               </div>
-              <div>
-                <h1 className="text-2xl font-bold text-slate-900">RoyaGPT Setup</h1>
-                <p className="text-slate-500 mt-2 text-sm leading-relaxed">
-                  Ich führe dich strukturiert durch alle relevanten Fragen und erstelle daraus
-                  ein vollständiges, fehlerfreies Agent-Setup — 9 Blöcke, 62 Fragen.
-                </p>
+            ) : (
+              /* No existing setup — show intro */
+              <div className="max-w-lg w-full text-center space-y-6">
+                <div className="w-16 h-16 rounded-2xl bg-violet-600 flex items-center justify-center mx-auto shadow-lg shadow-violet-200">
+                  <span className="text-white text-2xl font-bold">R</span>
+                </div>
+                <div>
+                  <h1 className="text-2xl font-bold text-slate-900">RoyaGPT Setup</h1>
+                  <p className="text-slate-500 mt-2 text-sm leading-relaxed">
+                    Ich führe dich strukturiert durch alle relevanten Fragen und erstelle daraus
+                    ein vollständiges, fehlerfreies Agent-Setup — 9 Blöcke, 62 Fragen.
+                  </p>
+                </div>
+                <div className="grid grid-cols-3 gap-3 text-left">
+                  {[
+                    { icon: "🏢", label: "Unternehmen & Angebot" },
+                    { icon: "🎯", label: "Zielgruppe & Einwände" },
+                    { icon: "⚡", label: "Regeln & Eskalation" },
+                  ].map(item => (
+                    <div key={item.label} className="bg-white border border-slate-200 rounded-xl p-3">
+                      <span className="text-lg">{item.icon}</span>
+                      <p className="text-xs font-medium text-slate-700 mt-1">{item.label}</p>
+                    </div>
+                  ))}
+                </div>
+                <button onClick={start}
+                  className="w-full py-4 rounded-2xl bg-violet-600 text-white font-semibold text-sm hover:bg-violet-700 transition-all shadow-lg shadow-violet-200">
+                  Setup starten →
+                </button>
               </div>
-              <div className="grid grid-cols-3 gap-3 text-left">
-                {[
-                  { icon: "🏢", label: "Unternehmen & Angebot" },
-                  { icon: "🎯", label: "Zielgruppe & Einwände" },
-                  { icon: "⚡", label: "Regeln & Eskalation" },
-                ].map(item => (
-                  <div key={item.label} className="bg-white border border-slate-200 rounded-xl p-3">
-                    <span className="text-lg">{item.icon}</span>
-                    <p className="text-xs font-medium text-slate-700 mt-1">{item.label}</p>
-                  </div>
-                ))}
-              </div>
-              <button onClick={start}
-                className="w-full py-4 rounded-2xl bg-violet-600 text-white font-semibold text-sm hover:bg-violet-700 transition-all shadow-lg shadow-violet-200">
-                Setup starten →
-              </button>
-            </div>
+            )}
           </div>
 
         ) : (
@@ -322,48 +421,30 @@ function SetupPageInner() {
             {/* Completion banner */}
             {isComplete && setupData && (
               <div className="mx-6 mb-3 bg-emerald-50 border border-emerald-200 rounded-2xl p-5">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-emerald-800">Setup abgeschlossen</p>
-                    <p className="text-xs text-emerald-600 mt-1">
-                      Agent: <strong>{setupData.agentName}</strong> · {setupData.companyName} · {setupData.cta}
+                <div className="flex items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-emerald-800">Setup abgeschlossen ✓</p>
+                    <p className="text-xs text-emerald-600 mt-0.5">
+                      <strong>{setupData.agentName}</strong> · {setupData.companyName}
                     </p>
-                    <input
-                      value={frameworkName}
-                      onChange={e => setFrameworkName(e.target.value)}
-                      placeholder="Name des Frameworks..."
-                      className="mt-2 w-full bg-white border border-emerald-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-violet-400"
-                    />
                   </div>
                   <div className="shrink-0">
-                    {savedId ? (
+                    {saved ? (
                       <div className="flex items-center gap-2 px-4 py-2 bg-emerald-600 rounded-xl">
-                        <span className="text-white text-xs font-semibold">✓ Gespeichert</span>
+                        <span className="text-white text-xs font-semibold">✓ Aktiviert — Weiterleitung…</span>
                       </div>
                     ) : (
                       <button onClick={saveSetup} disabled={saving}
                         className="flex items-center gap-2 px-4 py-2.5 bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold rounded-xl transition-all disabled:opacity-60 shadow-md shadow-violet-200 whitespace-nowrap">
-                        {saving ? "Speichern..." : "Setup speichern →"}
+                        {saving ? "Aktivieren…" : "Aktivieren →"}
                       </button>
                     )}
                   </div>
                 </div>
-                {savedId && (
-                  <div className="mt-3 flex gap-2">
-                    <button onClick={() => router.push("/dashboard/settings")}
-                      className="flex-1 py-2 text-xs font-medium text-emerald-700 border border-emerald-200 rounded-xl hover:bg-emerald-100 transition-colors">
-                      Zu den Einstellungen
-                    </button>
-                    {campaignId && (
-                      <button onClick={() => router.push(`/dashboard/campaigns/${campaignId}/edit`)}
-                        className="flex-1 py-2 text-xs font-medium text-violet-700 border border-violet-200 rounded-xl hover:bg-violet-50 transition-colors">
-                        Kampagne öffnen
-                      </button>
-                    )}
-                    <button onClick={() => router.push("/dashboard")}
-                      className="flex-1 py-2 text-xs font-medium text-slate-600 border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors">
-                      Zum Dashboard
-                    </button>
+                {saveError && (
+                  <div className="mt-3 p-2.5 bg-red-50 border border-red-200 rounded-xl">
+                    <p className="text-xs text-red-700 font-medium">Fehler beim Speichern: {saveError}</p>
+                    <p className="text-[11px] text-red-500 mt-0.5">Versuche es nochmal oder kontaktiere den Support.</p>
                   </div>
                 )}
               </div>

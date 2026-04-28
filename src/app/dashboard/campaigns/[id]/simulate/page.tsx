@@ -515,8 +515,8 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
         body: JSON.stringify({
           leadName: contact.name,
           agentName: fw.agentName || "Lena",
-          companyName: bc.companyName || campaign.name,
-          offer: bc.offer || campaign.name,
+          companyName: bc.companyName || "",
+          offer: bc.offer || "",
           goal: bc.cta || "Reaktivierungsgespräch starten",
           valueProp: bc.valueProp || "",
           painPoint: bc.painPoint || "",
@@ -533,13 +533,15 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
         }),
       });
       const data = await res.json();
-      text = data.opener || `Hallo ${contact.name}, ist das Thema ${campaign.name} noch aktuell für dich?`;
+      const firstName = contact.name.split(" ")[0];
+      text = data.opener || `Hey ${firstName}, hier ${fw.agentName || "Lena"}. Kurze Frage: Ist unser letztes Thema für dich noch aktuell?`;
       syncTyping(false);
       addMsg("agent", text, openerIdx >= 0 ? openerIdx : 0);
       syncHistory([{ role: "agent", body: text }]);
     } catch {
       syncTyping(false);
-      const fallback = `Hallo ${contact.name}, ist das Thema ${campaign.name} noch aktuell für dich?`;
+      const firstName = contact.name.split(" ")[0];
+      const fallback = `Hey ${firstName}, hier ${campaign.aiFramework?.agentName || "Lena"}. Kurze Frage: Ist unser letztes Thema für dich noch aktuell?`;
       addMsg("agent", fallback, openerIdx >= 0 ? openerIdx : 0);
       syncHistory([{ role: "agent", body: fallback }]);
     }

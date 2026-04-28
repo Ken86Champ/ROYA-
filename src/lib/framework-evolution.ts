@@ -224,10 +224,9 @@ export async function evolveFramework(): Promise<EvolvedFramework> {
 
   console.log(`[ROYA] Evolving framework v${nextVersion} with ${learnedRules.learnings.length} learnings...`);
 
-  const response = await client.messages.create({
+  const stream = client.messages.stream({
     model: 'claude-sonnet-4-6',
     max_tokens: 16000,
-    temperature: 0.2,
     system: EVOLUTION_PROMPT,
     messages: [{
       role: 'user',
@@ -260,8 +259,11 @@ ${learnedPrompt || '(Keine Learnings vorhanden — verwende ROYA Standard unver�
 Verschmelze jetzt beide Quellen zu EINEM Framework. Learnings haben Vorrang bei Widersprüchen.`,
     }],
   });
+  const response = await stream.finalMessage();
 
-  const raw = (response.content[0] as { text: string }).text.trim();
+  const textBlock = response.content.find(b => b.type === 'text') as { text: string } | undefined;
+  const raw = (textBlock?.text ?? '').trim();
+  if (!raw) throw new Error('Keine Antwort von Claude erhalten');
   // Robust JSON extraction
   let json = raw.replace(/^```json?\s*\n?/, '').replace(/\n?\s*```$/, '');
   const braceStart = json.indexOf('{');
@@ -285,16 +287,17 @@ Verschmelze jetzt beide Quellen zu EINEM Framework. Learnings haben Vorrang bei 
     } catch {
       // Last resort: ask Claude to fix its own JSON
       console.warn('[ROYA] Repair failed, asking Claude to fix JSON...');
-      const fixResponse = await client.messages.create({
+      const fixStream = client.messages.stream({
         model: 'claude-sonnet-4-6',
         max_tokens: 8000,
-        temperature: 0,
         messages: [{
           role: 'user',
           content: `Fix the following malformed JSON. Return ONLY valid JSON, nothing else:\n\n${json.slice(0, 25000)}`,
         }],
       });
-      const fixRaw = (fixResponse.content[0] as { text: string }).text.trim();
+      const fixResponse = await fixStream.finalMessage();
+      const fixTextBlock = fixResponse.content.find(b => b.type === 'text') as { text: string } | undefined;
+      const fixRaw = (fixTextBlock?.text ?? '').trim();
       const fixJson = fixRaw.replace(/^```json?\s*\n?/, '').replace(/\n?\s*```$/, '');
       const fixBraceStart = fixJson.indexOf('{');
       const fixBraceEnd = fixJson.lastIndexOf('}');

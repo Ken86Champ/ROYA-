@@ -41,10 +41,9 @@ export async function decideStrategy(
   options?: StrategistOptions,
 ): Promise<StrategyDecision> {
   try {
-    const response = await client.messages.create({
+    const stream = client.messages.stream({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 500,
-      temperature: options?.temperature ?? 0.3,
       system: buildStrategistPrompt(context.business, options?.framework),
       messages: [{
         role: 'user',
@@ -57,8 +56,9 @@ export async function decideStrategy(
         }),
       }],
     });
-
-    const raw = (response.content[0] as { text: string }).text.trim();
+    const response = await stream.finalMessage();
+    const textBlock = response.content.find(b => b.type === 'text') as { text: string } | undefined;
+    const raw = (textBlock?.text ?? '').trim();
     let json = raw.replace(/^```json?\s*\n?/, '').replace(/\n?\s*```$/, '');
     const braceStart = json.indexOf('{');
     const braceEnd = json.lastIndexOf('}');

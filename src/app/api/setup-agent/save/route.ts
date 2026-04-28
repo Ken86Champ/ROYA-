@@ -37,6 +37,7 @@ interface SetupData {
   objections?: { objection: string; response: string }[];
   escalationTriggers?: string;
   temperature?: number;
+  systemPrompt?: string;
 }
 
 export async function POST(req: NextRequest) {
@@ -53,30 +54,8 @@ export async function POST(req: NextRequest) {
     }
 
     const frameworkId = genId('fw');
-    const name = frameworkName || `${setupData.companyName || 'Unbekannt'} — Setup`;
 
-    // 1. Save prompt framework
-    const { error: fwError } = await supabase.from('prompt_frameworks').insert({
-      id: frameworkId,
-      agency_id: agencyId,
-      name,
-      description: `Automatisch erstellt durch RoyaGPT Setup für ${setupData.companyName || 'Unbekannt'}`,
-      is_system: false,
-      writer_instructions: setupData.writerInstructions || '',
-      strategist_instructions: setupData.strategistInstructions || '',
-      interpreter_instructions: setupData.interpreterInstructions || '',
-      rules: setupData.rules || [],
-      forbidden_phrases: setupData.forbiddenPhrases || [],
-      temperature: setupData.temperature ?? 0.7,
-      example_messages: [],
-    });
-
-    if (fwError) {
-      console.error('[ROYA] save framework error:', fwError);
-      return NextResponse.json({ error: fwError.message }, { status: 500 });
-    }
-
-    // 2. Build business_extra from setupData
+    // Build business_extra from setupData
     const businessExtra = {
       industry:           setupData.industry,
       companyDescription: setupData.targetAudience,
@@ -93,7 +72,7 @@ export async function POST(req: NextRequest) {
       exampleConversation:setupData.exampleConversation,
     };
 
-    // 3. Link to campaign if provided
+    // Link to campaign if provided
     if (campaignId) {
       const { error: campError } = await supabase
         .from('campaigns')
@@ -116,7 +95,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 4. Update agency_settings persona defaults
+    // Update agency_settings persona defaults
     const { data: existingSettings } = await supabase
       .from('agency_settings')
       .select('config')
@@ -134,13 +113,27 @@ export async function POST(req: NextRequest) {
         tone:         setupData.tone,
         language:     setupData.language || 'du',
       },
+      businessExtra,
+      writerInstructions:      setupData.writerInstructions || '',
+      strategistInstructions:  setupData.strategistInstructions || '',
+      interpreterInstructions: setupData.interpreterInstructions || '',
+      rules:           setupData.rules || [],
+      forbiddenPhrases: setupData.forbiddenPhrases || [],
+      ...(setupData.systemPrompt ? { systemPrompt: setupData.systemPrompt } : {}),
       activeFrameworkId: frameworkId,
     };
 
-    await supabase
+    const { error: settingsError } = await supabase
       .from('agency_settings')
-      .upsert({ agency_id: agencyId, config: updatedConfig })
-      .eq('agency_id', agencyId);
+      .upsert(
+        { agency_id: agencyId, config: updatedConfig, updated_at: new Date().toISOString() },
+        { onConflict: 'agency_id' }
+      );
+
+    if (settingsError) {
+      console.error('[ROYA] agency_settings upsert error:', settingsError);
+      return NextResponse.json({ error: settingsError.message }, { status: 500 });
+    }
 
     return NextResponse.json({ frameworkId, success: true });
   } catch (err) {
