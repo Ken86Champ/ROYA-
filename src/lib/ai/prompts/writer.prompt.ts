@@ -31,11 +31,19 @@ ${persona.tone}`;
   // ── Booking guard — inject before any other rules ──
   // ALL appointments are phone/video calls — never physical meetings, never ask for Ort
   if (framework?.availableSlots) {
-    prompt += `\n\nTERMINBUCHUNG — TELEFONTERMIN/ANRUF:
+    const isConfirmation = framework.availableSlots.startsWith('LEAD HAT AUSGEWÄHLT:');
+    if (isConfirmation) {
+      prompt += `\n\nTERMINBESTÄTIGUNG — JETZT ABSCHLIESSEN:
+Der Lead hat einen Termin ausgewählt. Bestätige den Termin kurz und klar.
+${framework.availableSlots}
+REGEL: Extrahiere den gewählten Tag + die dazugehörige Uhrzeit aus den angebotenen Terminen. Bestätige mit: "Perfekt, ich trage dich für [Tag] um [Uhrzeit] ein. Ich rufe dich dann an." KEINE weiteren Fragen. KEIN Overhead. 1-2 Sätze maximum.`;
+    } else {
+      prompt += `\n\nTERMINBUCHUNG — TELEFONTERMIN/ANRUF:
 Alle Termine sind Telefon- oder Videoanrufe. Frage NIEMALS nach einem Ort oder Treffpunkt.
 Verfügbare Zeiten (NUR diese vorschlagen — keine anderen erfinden):
 ${framework.availableSlots}
 REGEL: Nenne ausschliesslich Termine aus dieser Liste. Kein Termin darf in der Vergangenheit liegen.`;
+    }
   } else if (framework?.hasCalendar === false) {
     const link = framework.bookingLink || persona.bookingLink || '';
     prompt += `\n\nTERMINBUCHUNG — TELEFONTERMIN/ANRUF: Alle Termine sind Telefon- oder Videoanrufe. Frage NIEMALS nach einem Ort oder Treffpunkt. Kein Kalender verbunden. Schlage KEINE konkreten Daten oder Uhrzeiten vor.${link ? ` Teile stattdessen diesen Buchungslink: ${link}` : ' Frage nach einem allgemeinen Zeitraum (z.B. "Welche Woche passt dir für einen kurzen Anruf?")'}`;
@@ -136,6 +144,9 @@ SCHREIBREGELN — diese gelten absolut:
     "Mit freundlichen Grüssen",
     "Kein Problem",
     "Alles gut",
+    "was meinst du",
+    "Was meinst du",
+    "Verstehe ich",
   ];
   const forbidden = [...new Set([...ALWAYS_FORBIDDEN, ...(framework?.forbiddenPhrases ?? [])])];
   if (forbidden.length > 0) {

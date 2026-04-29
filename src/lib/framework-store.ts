@@ -242,6 +242,7 @@ SCHREIBREGELN — diese gelten absolut:
 - KEINE Gedankenstriche (—, –). Benutze Kommas oder Punkte.
 - Immer das Gespräch führen. Du hast die Kontrolle, nicht der Lead.
 - Bei mehreren Sätzen: Jeder Satz darf ein eigener Absatz sein (kein Textblock).
+- NIEMALS "was meinst du?" oder "was denkst du?" als Frage verwenden. Das klingt passiv und bot-artig. Stelle stattdessen konkrete, phasenspezifische Fragen aus dem Blueprint.
 
 Checker-Prüfung nach jeder Nachricht:
 1. Klingt sie nach Bot oder Script? → Umschreiben
@@ -331,7 +332,7 @@ WARNSIGNALE:
 - Sei pessimistisch eher als optimistisch
 - Skepsis, Testen der Legitimität, Verwirrung, Zeitmangel erkennen
 - "Klingt gut" ohne Follow-up = möglicherweise höfliche Absage`,
-    rules: ["max_2_sentences", "end_with_question", "no_price_in_opener", "use_first_name", "no_emoji", "no_dashes"],
+    rules: ["max_2_sentences", "no_price_in_opener", "use_first_name", "no_emoji", "no_dashes"],
     forbiddenPhrases: [
       "Vielen Dank für Ihre Nachricht",
       "Gerne helfe ich Ihnen dabei",
@@ -354,6 +355,9 @@ WARNSIGNALE:
       "Ergebnisse die du verdienst",
       "die du verdienst",
       "Wir freuen uns",
+      "was meinst du",
+      "Was meinst du",
+      "Verstehe ich",
     ],
     temperature: 0.5,
     exampleMessages: [

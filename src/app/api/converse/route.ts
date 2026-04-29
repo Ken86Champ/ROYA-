@@ -353,8 +353,13 @@ export async function POST(req: NextRequest) {
       guards,
     });
 
-    // Override: if agent is looping on diagnose questions, force pitch
-    if (strategy.nextAction === 'ask_question' && guards.diagnoseQuestionCount >= 3) {
+    // Override: if agent is looping on diagnose questions, force pitch regardless of strategist action
+    if (guards.diagnoseQuestionCount >= 3 &&
+        strategy.nextAction !== 'book_call' &&
+        strategy.nextAction !== 'stop' &&
+        strategy.nextAction !== 'handoff' &&
+        strategy.nextAction !== 'soft_pitch' &&
+        strategy.nextAction !== 'defer') {
       console.warn('[ROYA] Forcing soft_pitch — agent asked 3+ diagnose questions already');
       (strategy as { nextAction: string }).nextAction = 'soft_pitch';
     }
@@ -384,8 +389,21 @@ export async function POST(req: NextRequest) {
       (strategy as { nextAction: string }).nextAction = 'defer';
     }
 
-    // ── Fetch real calendar slots if booking action ──────────────────────────
-    if (strategy.nextAction === 'book_call') {
+    // Override: lead selects a day/time from slots the agent just presented → force book_call + confirm
+    const BOOKING_SELECTION_PATTERN = /\b(montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag|\d{1,2}:\d{2}|passt\s+(mir\s+)?gut|nehme\s+(den|die)|das\s+passt|super\s+(termin|passt)|okay\s+gut)\b/i;
+    const lastAgentBody = history.filter(m => m.role === 'agent').slice(-1)[0]?.body || '';
+    const lastAgentHadTimeSlots = /\b\d{1,2}:\d{2}\b/.test(lastAgentBody);
+    if (lastAgentHadTimeSlots && BOOKING_SELECTION_PATTERN.test(message) &&
+        strategy.nextAction !== 'stop' && strategy.nextAction !== 'handoff') {
+      console.warn('[ROYA] Forcing book_call — lead selected a time slot from presented options');
+      (strategy as { nextAction: string }).nextAction = 'book_call';
+      // Pass the previously offered slots to the writer so it can confirm the right one
+      writerFramework.availableSlots = `LEAD HAT AUSGEWÄHLT: "${message}"\nAngebotene Termine (aus letzter Agent-Nachricht): ${lastAgentBody.match(/\b(?:Montag|Dienstag|Mittwoch|Donnerstag|Freitag)\s+\d{1,2}:\d{2}\b/gi)?.join(' | ') || lastAgentBody}`;
+      writerFramework.hasCalendar = true;
+    }
+
+    // ── Fetch real calendar slots if booking action (and slots not already set above) ──────────────────────────
+    if (strategy.nextAction === 'book_call' && !writerFramework.availableSlots) {
       const calResult = await fetchCalendarSlotsForWriter();
       writerFramework.availableSlots = calResult.formatted || undefined;
       writerFramework.hasCalendar = calResult.connected;

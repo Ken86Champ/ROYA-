@@ -27,6 +27,9 @@ const ALWAYS_FORBIDDEN = [
   "Mit freundlichen Grüssen",
   "Kein Problem",
   "Alles gut",
+  "was meinst du",
+  "Was meinst du",
+  "Verstehe ich",
 ];
 
 export interface WriteOptions {

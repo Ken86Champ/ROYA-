@@ -637,6 +637,10 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
       });
       const data = await res.json();
       syncTyping(false);
+      // If the conversation ended (STOP/HANDOFF) and there's no reply, don't show a fallback bubble
+      if ((data.type === 'STOP' || data.type === 'HANDOFF') && !data.reply) {
+        return;
+      }
       const reply = data.reply || data.error || "⚠ Keine Antwort erhalten.";
       const followupIdx = (campaign.flow ?? []).findIndex(s => s.type === "followup");
       addMsg("agent", reply, followupIdx >= 0 ? followupIdx : 1);
