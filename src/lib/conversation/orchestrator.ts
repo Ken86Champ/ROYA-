@@ -159,7 +159,7 @@ export async function runConversationTurn(params: TurnParams): Promise<Orchestra
   const turnStart = Date.now();
 
   // Hard stops — no LLM needed
-  const GOODBYE = 'Alles gut. Meld dich gern, wenn das Thema wieder aktuell wird.';
+  const GOODBYE = 'Verstanden. Meld dich gern, wenn das Thema wieder aktuell wird.';
   if (guards.isProblemSolved || detectProblemSolved(params.incomingMessage)) {
     traceTurn({
       conversationId: params.conversationId,
@@ -251,8 +251,9 @@ export async function runConversationTurn(params: TurnParams): Promise<Orchestra
     temperature: fw.temperature,
   });
 
-  // Post-interpreter rejection check
-  if (interpretation.isExplicitRejection || interpretation.isProblemSolved) {
+  // Post-interpreter rejection check — only trust isExplicitRejection from LLM,
+  // NOT isProblemSolved (too broad — e.g. 'Ich habe schon alles versucht' ≠ solved)
+  if (interpretation.isExplicitRejection) {
     traceTurn({
       conversationId: params.conversationId,
       contactId: params.leadId,
@@ -284,8 +285,14 @@ export async function runConversationTurn(params: TurnParams): Promise<Orchestra
     guards,
   });
 
-  // Force soft_pitch if diagnose-loop detected
-  if (strategy.nextAction === 'ask_question' && guards.diagnoseQuestionCount >= 3) {
+  // Force soft_pitch after 2 diagnose questions — don't let agent loop on diagnosis
+  if (guards.diagnoseQuestionCount >= 2 &&
+      strategy.nextAction !== 'book_call' &&
+      strategy.nextAction !== 'stop' &&
+      strategy.nextAction !== 'handoff' &&
+      strategy.nextAction !== 'soft_pitch' &&
+      strategy.nextAction !== 'defer') {
+    console.warn('[ROYA] Forcing soft_pitch — diagnoseQuestionCount:', guards.diagnoseQuestionCount);
     (strategy as { nextAction: string }).nextAction = 'soft_pitch';
   }
 

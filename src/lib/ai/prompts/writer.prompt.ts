@@ -137,7 +137,7 @@ SCHREIBREGELN — diese gelten absolut:
     "Vielen Dank für Ihre Nachricht",
     "Gerne helfe ich Ihnen dabei",
     "Das freut mich zu hören",
-    "Das klingt super",
+    "Das klingt",
     "Lass mich kurz erklären",
     "Ich hoffe",
     "Herzliche Grüsse",

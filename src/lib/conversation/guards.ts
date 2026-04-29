@@ -68,6 +68,7 @@ const PROBLEM_SOLVED_PATTERNS = [
 ];
 
 const DIAGNOSE_PATTERNS = [
+  // ── Original patterns ──
   /\bwas\s+hat\s+(bisher\s+)?nicht\s+funktioniert\b/i,
   /\bwas\s+ist\s+(dein|deine|das)\s+gr[oö](?:ss|ß)te[rns]?\s+(challenge|herausforderung|problem|hindernis)\b/i,
   /\bworan\s+hat\s+es\s+(gelegen|gescheitert)\b/i,
@@ -79,6 +80,20 @@ const DIAGNOSE_PATTERNS = [
   /\bwelche[sr]?\s+ziel\b/i,
   /\bwas\s+m[oö]chtest\s+du\s+erreichen\b/i,
   /\bwas\s+ist\s+der\s+(gr[oö](?:ss|ß)te[rns]?|wichtigste)\s+(grund|anlass)\b/i,
+  // ── Broad patterns matching actual LLM-generated diagnosis questions ──
+  /\bwas\s+waren\s+(bisher\s+|deine\s+|die\s+)*(gr[oö](?:ss|ß)te[rns]?|wichtigste[rns]?|h[aä]ufigste[rns]?)\b/i,
+  /\bgab\s+es\s+(etwas|spezielle|bestimmte|besondere)\b/i,
+  /\bschwer\s+gefallen\b/i,
+  /\bwas\s+glaubst\s+du\b/i,
+  /\bwas\s+genau\s+hat\b/i,
+  /\bam\s+meisten\s+(frustriert|belastet|gest[oö]rt|gehindert|aufgehalten|genervt)\b/i,
+  /\bwas\s+hat\s+(dir|dich)\b/i,
+  /\bwie\s+war\s+das\s+bei\s+dir\b/i,
+  /\bwelche[srm]?\s+(h[uü]rden?|barrieren?|hindernisse?|herausforderungen?|schwierigkeiten?)\b/i,
+  /\bwas\s+fehlte?\b/i,
+  /\bwas\s+hat\s+dich\s+(blockiert|gehindert|zur[uü]ckgehalten)\b/i,
+  /\bwarum\s+hast\s+du\b/i,
+  /\bwas\s+(bisher|in\s+der\s+vergangenheit)\b/i,
 ];
 
 // ── Exported guard functions ────────────────────────────────────────────────
@@ -130,12 +145,20 @@ export function detectProblemSolved(message: string): boolean {
 }
 
 /**
- * Counts how many diagnose questions the agent has already asked.
+ * Counts how many diagnose questions the agent has already asked (pattern-based).
  */
 export function countDiagnoseQuestionsByAgent(history: HistoryMessage[]): number {
   return agentMessages(history).filter(m =>
     DIAGNOSE_PATTERNS.some(p => p.test(m.content))
   ).length;
+}
+
+/**
+ * Counts total agent messages that contain a '?' — broad fallback counter.
+ * Ensures loops are caught even when DIAGNOSE_PATTERNS don't match.
+ */
+export function countAgentQuestionsTotal(history: HistoryMessage[]): number {
+  return agentMessages(history).filter(m => m.content.includes('?')).length;
 }
 
 /**
@@ -195,13 +218,19 @@ export function buildGuards(
   // Check if there was a previous rejection in history (before current message)
   const prevRejectionCount = countExplicitRejections(history);
 
+  // Use the higher of: pattern-based count OR (total questions - 2 for opener+goal)
+  // This catches loops even when the LLM uses phrasings not in DIAGNOSE_PATTERNS
+  const diagnoseByPattern = countDiagnoseQuestionsByAgent(history);
+  const diagnoseByTotal = Math.max(0, countAgentQuestionsTotal(history) - 2);
+  const diagnoseQuestionCount = Math.max(diagnoseByPattern, diagnoseByTotal);
+
   return {
     turnCount: leadMessages(history).length,
     rejectionCount: countExplicitRejections([
       ...history,
       { role: 'lead', content: currentMessage, timestamp: new Date().toISOString() },
     ]),
-    diagnoseQuestionCount: countDiagnoseQuestionsByAgent(history),
+    diagnoseQuestionCount,
     duplicateAgentQuestions: detectRepeatedAgentQuestions(history),
     duplicateLeadMessages: detectRepeatedLeadMessages(history),
     currentPhase: derivePhase(history, currentMessage),

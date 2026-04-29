@@ -20,7 +20,7 @@ const ALWAYS_FORBIDDEN = [
   "Vielen Dank für Ihre Nachricht",
   "Gerne helfe ich Ihnen dabei",
   "Das freut mich zu hören",
-  "Das klingt super",
+  "Das klingt",
   "Lass mich kurz erklären",
   "Ich hoffe",
   "Herzliche Grüsse",
@@ -219,19 +219,33 @@ async function validateAndRegenerate(
       console.warn('[ROYA] Writer: regeneration still has forbidden phrases — substring deletion');
       for (const phrase of stillForbidden) {
         const regex = new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
-        result = result.replace(regex, '').replace(/\s{2,}/g, ' ').trim();
+        result = result.replace(regex, '');
       }
+      result = cleanupOrphanedPunctuation(result);
     }
   } catch {
     // Regeneration failed — fall back to substring deletion
     console.warn('[ROYA] Writer: regeneration failed — substring deletion fallback');
     for (const phrase of found) {
       const regex = new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
-      result = result.replace(regex, '').replace(/\s{2,}/g, ' ').trim();
+      result = result.replace(regex, '');
     }
+    result = cleanupOrphanedPunctuation(result);
   }
 
   return result;
+}
+
+/**
+ * Cleans up orphaned punctuation left after forbidden-phrase deletion.
+ * e.g. "frustriert, was meinst du?" → delete "was meinst du" → "frustriert, ?" → "frustriert?"
+ */
+function cleanupOrphanedPunctuation(text: string): string {
+  return text
+    .replace(/,\s*([?!])/g, '$1')   // ", ?" → "?", ", !" → "!"
+    .replace(/\s+([?!.])/g, '$1')   // space before punctuation
+    .replace(/\s{2,}/g, ' ')
+    .trim();
 }
 
 /**
