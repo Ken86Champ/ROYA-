@@ -78,6 +78,19 @@ Gib deine Analyse zurück:
   "likelyNeed": "was die Person gerade braucht",
   "hiddenConcern": "der versteckte Einwand oder die echte Hürde",
   "stateRecommendation": "new_unaware|lightly_engaged|curious|guarded|skeptical|warm|interested_but_busy|needs_clarity|pricing_probe|qualified_ready|not_now|dead|handoff_required",
-  "riskFlags": ["z.B. aggressive Sprache", "Preisfrage zu früh"]
-}`;
+  "riskFlags": ["z.B. aggressive Sprache", "Preisfrage zu früh"],
+  "responseQuality": "substantive|minimal|evasive|confused|duplicate",
+  "isExplicitRejection": false,
+  "isProblemSolved": false
+}
+
+Def. responseQuality:
+- substantive: klare Antwort mit Inhalt
+- minimal: 1-2 Wörter, kaum Inhalt ("Ja", "Ok", "Danke")
+- evasive: ausweichend, keine direkte Antwort auf Agent-Frage
+- confused: Antwort passt nicht zum Kontext, inkohärent
+- duplicate: selbe Botschaft wie vorherige Nachricht der Person
+
+Def. isExplicitRejection: true wenn die Nachricht eindeutig kein Interesse signalisiert (hard_rejection Muster)
+Def. isProblemSolved: true wenn die Person eine eigene Lösung gefunden hat ("mache schon", "problem gelöst", "habe schon")`;
 }

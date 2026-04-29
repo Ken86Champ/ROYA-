@@ -65,8 +65,21 @@ export async function writeAndCheck(
       parsed = JSON.parse(repaired);
     }
 
+    const rawMessage = (parsed.finalMessage as string) || '';
+
+    // ── Forbidden-phrase check: LLM regeneration instead of substring deletion ──
+    const finalMessage = await validateAndRegenerate(
+      rawMessage,
+      options?.framework,
+      context,
+      incomingMessage,
+      interpretation,
+      strategy,
+      options,
+    );
+
     return {
-      finalMessage: validateResponse((parsed.finalMessage as string) || '', options?.framework),
+      finalMessage,
       confidence: Number(parsed.confidence) || 70,
       shouldHandoff: Boolean(parsed.shouldHandoff),
       handoffReason: (parsed.handoffReason as string) || undefined,
@@ -100,9 +113,113 @@ const TEXT_SMILEY_REGEX = /\s*[:;][-']?[)(DPp|/\\]\s*/g;
 
 function validateResponse(message: string, framework?: WriterFrameworkOptions): string {
   if (!message) return message;
+  // Apply structural rules first
+  let result = applyStructuralRules(message, framework);
+  // Legacy: substring deletion for forbidden phrases (used outside regen flow)
+  const forbidden = framework?.forbiddenPhrases ?? [];
+  for (const phrase of forbidden) {
+    const regex = new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+    result = result.replace(regex, '').replace(/\s{2,}/g, ' ').trim();
+  }
+  return result;
+}
+
+/**
+ * Detects forbidden phrases in a message.
+ * Returns the list of phrases found, or empty array if none.
+ */
+function detectForbiddenPhrases(message: string, framework?: WriterFrameworkOptions): string[] {
+  const forbidden = [...ALWAYS_FORBIDDEN, ...(framework?.forbiddenPhrases ?? [])];
+  return forbidden.filter(phrase => {
+    const regex = new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+    return regex.test(message);
+  });
+}
+
+/**
+ * Checks message for forbidden phrases. If found, triggers ONE LLM regeneration
+ * with explicit instruction to avoid them. Falls back to substring deletion if
+ * regeneration still fails.
+ */
+async function validateAndRegenerate(
+  message: string,
+  framework: WriterFrameworkOptions | undefined,
+  context: ConversationContext,
+  incomingMessage: string,
+  interpretation: MessageInterpretation,
+  strategy: StrategyDecision,
+  options: WriteOptions | undefined,
+): Promise<string> {
+  // First, apply non-forbidden-phrase rules (emoji, dashes, sentence count, question)
+  let result = applyStructuralRules(message, framework);
+
+  // Check for forbidden phrases
+  const found = detectForbiddenPhrases(result, framework);
+  if (found.length === 0) return result;
+
+  // Regenerate with explicit prohibition
+  console.warn('[ROYA] Writer: forbidden phrases found, regenerating:', found);
+  try {
+    const regenRaw = (await llmChat({
+      model: options?.model || 'gpt-4o-mini',
+      system: buildWriterAndCheckerPrompt(context.business, options?.framework),
+      messages: [{
+        role: 'user',
+        content: buildWriterUserPrompt({
+          leadName: context.leadName,
+          incomingMessage,
+          historyText: historyToText(context, 8),
+          interpretation,
+          strategy,
+          turnCount: context.history.length,
+        }),
+      }, {
+        role: 'assistant',
+        content: JSON.stringify({ finalMessage: result }),
+      }, {
+        role: 'user',
+        content: `KORREKTUR ERFORDERLICH. Deine Nachricht enthält VERBOTENE Phrasen:\n${found.map(p => `- "${p}"`).join('\n')}\n\nSchreibe die Nachricht neu. OHNE diese Phrasen. Gleicher JSON-Output.`,
+      }],
+      maxTokens: 400,
+      temperature: 0.4,
+    })).trim();
+    let regenJson = regenRaw.replace(/^```json?\s*\n?/, '').replace(/\n?\s*```$/, '');
+    const bs = regenJson.indexOf('{');
+    const be = regenJson.lastIndexOf('}');
+    if (bs !== -1 && be > bs) regenJson = regenJson.slice(bs, be + 1);
+    const regenParsed = JSON.parse(regenJson);
+    const regenMessage = (regenParsed.finalMessage as string) || result;
+    result = applyStructuralRules(regenMessage, framework);
+
+    // If still has forbidden phrases, do substring deletion as last resort
+    const stillForbidden = detectForbiddenPhrases(result, framework);
+    if (stillForbidden.length > 0) {
+      console.warn('[ROYA] Writer: regeneration still has forbidden phrases — substring deletion');
+      for (const phrase of stillForbidden) {
+        const regex = new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+        result = result.replace(regex, '').replace(/\s{2,}/g, ' ').trim();
+      }
+    }
+  } catch {
+    // Regeneration failed — fall back to substring deletion
+    console.warn('[ROYA] Writer: regeneration failed — substring deletion fallback');
+    for (const phrase of found) {
+      const regex = new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+      result = result.replace(regex, '').replace(/\s{2,}/g, ' ').trim();
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Applies structural rules (emoji, dashes, sentence count, question).
+ * Does NOT touch forbidden-phrase removal — that's handled separately.
+ */
+function applyStructuralRules(message: string, framework?: WriterFrameworkOptions): string {
+  if (!message) return message;
   let result = message;
   const rules = framework?.rules ?? [];
-  const forbidden = framework?.forbiddenPhrases ?? [];
 
   // Rule: no_emoji — strip emoji characters AND text smileys like :) ;) :D
   if (rules.includes('no_emoji')) {
@@ -131,12 +248,6 @@ function validateResponse(message: string, framework?: WriterFrameworkOptions): 
     if (!isClose && !isGoodbye && !isRejection && result.length > 10) {
       result = result.replace(/[.!]?\s*$/, '') + ', was meinst du?';
     }
-  }
-
-  // Check forbidden phrases (case-insensitive)
-  for (const phrase of forbidden) {
-    const regex = new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
-    result = result.replace(regex, '').replace(/\s{2,}/g, ' ').trim();
   }
 
   return result;

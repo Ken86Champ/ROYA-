@@ -1,4 +1,4 @@
-import type { BusinessPersona, MessageInterpretation } from '@/lib/types/conversation';
+import type { BusinessPersona, MessageInterpretation, ConversationGuards } from '@/lib/types/conversation';
 import { RULE_TEXT } from '@/lib/campaign-types';
 
 export interface StrategistFrameworkOptions {
@@ -70,6 +70,18 @@ STOPP-REGELN — ABSOLUT VERBINDLICH — nextAction MUSS "stop" sein wenn:
 - Die Person hat eine Alternative gefunden ("Ich mache schon...", "Problem gelöst")
 Dann: stop. Kein weiteres Argument, keine weitere Frage, kein Pitch. Gesprächsende respektieren.`;
 
+  // ── Phase-Tracking: limits for each phase ──
+  prompt += `
+
+PHASEN-LOGIK (strikt einhalten):
+Phase 1 (Turn 1): Einzige Aufgabe — Neugierde wecken. KEINE Diagnose-Frage.
+Phase 2 (Turn 2-3): Ziel klären — max. 1 offene Frage. NICHT pitchen.
+Phase 3 (Turn 3-5): Diagnose — max. 2 Diagnose-Fragen total. Dann Brücke.
+Phase 4 (Turn 5-7): Reframe + Bridge — Buchungsvorschlag einführen.
+Phase 5 (Turn 7-10): Buchungsverhandlung — Datum fixieren oder Handoff.
+Phase 6 (Turn 10+): Buchung bestätigt oder Handoff — kein weiterer Pitch.
+Regel: Diagnose-Fragen > 2 = SOFORT zur Phase 4 (soft_pitch). Kein Warten.`;
+
   // ── Rules awareness for strategy ──
   const activeRules = framework?.rules ?? [];
   if (activeRules.length > 0) {
@@ -93,11 +105,23 @@ export function buildStrategistUserPrompt(params: {
   memoryContext: string;
   turnCount: number;
   rejectionCount: number;
+  guards?: ConversationGuards;
 }): string {
+  let guardsBlock = '';
+  if (params.guards) {
+    const g = params.guards;
+    guardsBlock = `
+GUARD-KONTEXT (deterministisch, nicht überschreiben):
+- Phase: ${g.currentPhase}/6
+- Diagnose-Fragen bisher: ${g.diagnoseQuestionCount}/2
+- Doppelter Agent-Loop: ${g.duplicateAgentQuestions}x
+- Ablehnungen (sicher): ${g.rejectionCount}
+- Problem gelöst: ${g.isProblemSolved ? 'JA — STOP' : 'nein'}`;
+  }
   return `LEAD: ${params.leadName}
 AKTUELLER ZUSTAND: ${params.currentState}
 GESPRÄCHSRUNDE: ${params.turnCount} | ABLEHNUNGEN ERKANNT: ${params.rejectionCount}
-SCORES: Temperatur=${params.scores.temperature}/100 | Reibung=${params.scores.friction}/100 | Buchungsbereitschaft=${params.scores.bookingReadiness}/100 | Vertrauen=${params.scores.trust}/100
+SCORES: Temperatur=${params.scores.temperature}/100 | Reibung=${params.scores.friction}/100 | Buchungsbereitschaft=${params.scores.bookingReadiness}/100 | Vertrauen=${params.scores.trust}/100${guardsBlock}
 
 ANALYSE:
 - Explizit: ${params.interpretation.explicitMeaning}

@@ -56,6 +56,8 @@ export interface ConversationScores {
   risk: number;              // 0-100  handoff / churn risk
 }
 
+export type ResponseQuality = 'substantive' | 'minimal' | 'evasive' | 'confused' | 'duplicate';
+
 export interface MessageInterpretation {
   explicitMeaning: string;
   implicitMeaning: string;
@@ -65,6 +67,10 @@ export interface MessageInterpretation {
   hiddenConcern: string;
   stateRecommendation: ConversationState;
   riskFlags: string[];
+  responseQuality?: ResponseQuality;      // quality of lead's response
+  isExplicitRejection?: boolean;          // hard signal: lead clearly said no
+  isProblemSolved?: boolean;              // lead has found alternative solution
+  detectedPhase?: 1 | 2 | 3 | 4 | 5 | 6; // LLM phase estimate
 }
 
 export interface StrategyDecision {
@@ -86,6 +92,18 @@ export interface ReplyCheck {
   reasons: string[];
   editedMessage?: string;
   shouldHandoff: boolean;
+}
+
+// Guard state — computed deterministically from history, never from LLM
+export interface ConversationGuards {
+  turnCount: number;                // number of lead turns
+  rejectionCount: number;           // explicit rejections detected
+  diagnoseQuestionCount: number;    // how many diagnose questions agent asked
+  duplicateAgentQuestions: number;  // max times agent repeated same question
+  duplicateLeadMessages: number;    // times lead repeated same message
+  currentPhase: 1 | 2 | 3 | 4 | 5 | 6;
+  isProblemSolved: boolean;
+  previousRejection: boolean;       // was there a rejection in previous turns
 }
 
 // Combined output from Interpret+Strategy call (Phase 1)

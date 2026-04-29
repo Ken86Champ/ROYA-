@@ -13,6 +13,13 @@ import { SYSTEM_FRAMEWORKS } from '@/lib/framework-store';
 import { loadEvolvedFramework } from '@/lib/framework-evolution';
 import { supabase } from '@/lib/supabase';
 import { fetchCalendarSlotsForWriter } from '@/lib/calendar-slots';
+import {
+  buildGuards,
+  detectProblemSolved,
+  countExplicitRejections,
+  detectRepeatedLeadMessages,
+  detectRepeatedAgentQuestions,
+} from '@/lib/conversation/guards';
 import type {
   ConversationContext,
   HistoryMessage,
@@ -20,6 +27,7 @@ import type {
   BusinessPersona,
   ConversationMemory,
   ConversationState,
+  ConversationGuards,
 } from '@/lib/types/conversation';
 
 const DEFAULT_SCORES: ConversationScores = {
@@ -202,14 +210,71 @@ export async function POST(req: NextRequest) {
     const currentState = deriveState(scores, leadTurns);
     const memory = buildMemoryFromHistory(history);
 
-    // Build minimal context for simulator (no DB needed)
-    const historyMessages: HistoryMessage[] = history.map(m => ({
-      role: m.role,
-      content: m.body,
-      timestamp: new Date().toISOString(),
-    }));
+  // ── Stop/Handoff helpers ──────────────────────────────────────────────────
+  const GOODBYE_MESSAGE = 'Alles gut. Meld dich gern, wenn das Thema wieder aktuell wird.';
 
-    const context: ConversationContext = {
+  function makeHandoffResponse(reason: string) {
+    return NextResponse.json({
+      reply: '',
+      nextAction: 'handoff',
+      shouldHandoff: true,
+      handoffReason: reason,
+      scores,
+      state: currentState,
+      frameworkVersion: 0,
+    });
+  }
+
+  function makeStopResponse() {
+    return NextResponse.json({
+      reply: GOODBYE_MESSAGE,
+      nextAction: 'stop',
+      shouldHandoff: false,
+      scores,
+      state: 'dead',
+      frameworkVersion: 0,
+    });
+  }
+
+  // Build historyMessages early for guards
+  const historyMessages: HistoryMessage[] = history.map(m => ({
+    role: m.role,
+    content: m.body,
+    timestamp: new Date().toISOString(),
+  }));
+
+  // ── PRE-CHECKS: Deterministic guards before any LLM call ──────────────────
+
+  // Hard Stop 1: More than 15 lead turns — structural loop
+  if (leadTurns >= 15) {
+    return makeHandoffResponse('Conversation überschreitet 15 Lead-Turns — Handoff erforderlich');
+  }
+
+  // Hard Stop 2: Lead repeating same message 3+ times
+  const duplicateLeadCount = detectRepeatedLeadMessages(historyMessages);
+  if (duplicateLeadCount >= 3) {
+    return makeHandoffResponse(`Lead wiederholt dieselbe Nachricht ${duplicateLeadCount}x — Loop erkannt`);
+  }
+
+  // Hard Stop 3: Agent repeating same question 3+ times
+  const duplicateAgentCount = detectRepeatedAgentQuestions(historyMessages);
+  if (duplicateAgentCount >= 3) {
+    return makeHandoffResponse(`Agent hat dieselbe Frage ${duplicateAgentCount}x gestellt — Loop erkannt`);
+  }
+
+  // Hard Stop 4: "Problem solved" signal in current message
+  if (detectProblemSolved(message)) {
+    return makeStopResponse();
+  }
+
+  // Hard Stop 5: 2+ explicit rejections (regex-based, no LLM needed)
+  const preRejectionCount = countExplicitRejections([
+    ...historyMessages,
+    { role: 'lead', content: message, timestamp: new Date().toISOString() },
+  ]);
+  if (preRejectionCount >= 2) {
+    return makeStopResponse();
+  }
       conversationId: 'simulator',
       leadName,
       channel: 'sms',
@@ -226,11 +291,29 @@ export async function POST(req: NextRequest) {
       temperature: 0.3,
       model: pipelineModel,
     });
+
+    // ── POST-INTERPRETER GUARDS: combine LLM signals with deterministic checks ──
+    const guards = buildGuards(historyMessages, message, interpretation);
+
+    if (interpretation.isProblemSolved || guards.isProblemSolved) {
+      return makeStopResponse();
+    }
+    if (guards.rejectionCount >= 2 || interpretation.isExplicitRejection) {
+      return makeStopResponse();
+    }
+
     const strategy = await decideStrategy(context, interpretation, {
       framework: strategistFramework,
       temperature: 0.3,
       model: pipelineModel,
+      guards,
     });
+
+    // Override: if agent is looping on diagnose questions, force pitch
+    if (strategy.nextAction === 'ask_question' && guards.diagnoseQuestionCount >= 3) {
+      console.warn('[ROYA] Forcing soft_pitch — agent asked 3+ diagnose questions already');
+      (strategy as { nextAction: string }).nextAction = 'soft_pitch';
+    }
 
     // ── Fetch real calendar slots if booking action ──────────────────────────
     if (strategy.nextAction === 'book_call') {
@@ -245,7 +328,7 @@ export async function POST(req: NextRequest) {
       model: pipelineModel,
     });
 
-    // Ensure we always have a reply
+    // Ensure we always have a reply — but NOT for stop actions (empty is correct)
     let reply = phase2.finalMessage || '';
     if (!reply && phase2.handoffReason === 'API_CREDIT_ERROR') {
       return NextResponse.json({
@@ -253,9 +336,35 @@ export async function POST(req: NextRequest) {
         error: 'API_CREDIT_ERROR',
       }, { status: 200 });
     }
+    // IMPORTANT: stop action intentionally returns empty finalMessage — do NOT fallback
+    if (!reply && strategy.nextAction === 'stop') {
+      // Silent stop — return structured response with no reply text
+      return NextResponse.json({
+        reply: '',
+        intent: interpretation.microIntent,
+        sentiment: interpretation.emotionalTone,
+        confidence: 100,
+        nextAction: 'stop',
+        shouldHandoff: false,
+        reasoning: 'Gesprächsende — Lead hat abgelehnt oder Problem ist gelöst',
+        scores,
+        state: currentState,
+        interpretation,
+        strategy,
+        frameworkVersion: evolved?.version ?? 0,
+      });
+    }
     if (!reply) {
-      console.warn('[ROYA] Writer returned empty — using fallback generation');
-      reply = `Danke für deine Nachricht! Lass mich da kurz schauen und melde mich gleich.`;
+      console.warn('[ROYA] Writer returned empty without stop intent — handoff');
+      return NextResponse.json({
+        reply: '',
+        nextAction: 'handoff',
+        shouldHandoff: true,
+        handoffReason: 'Writer leer — manuelle Prüfung erforderlich',
+        scores,
+        state: currentState,
+        frameworkVersion: evolved?.version ?? 0,
+      });
     }
 
     // Track conversation event (non-blocking)

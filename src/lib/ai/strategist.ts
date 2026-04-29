@@ -6,7 +6,7 @@
 import { llmChat } from '@/lib/ai/llm-client';
 import { buildStrategistPrompt, buildStrategistUserPrompt } from './prompts/strategist.prompt';
 import type { StrategistFrameworkOptions } from './prompts/strategist.prompt';
-import type { StrategyDecision, ConversationContext, MessageInterpretation, NextAction } from '@/lib/types/conversation';
+import type { StrategyDecision, ConversationContext, MessageInterpretation, NextAction, ConversationGuards } from '@/lib/types/conversation';
 
 const FALLBACK_STRATEGY: StrategyDecision = {
   primaryGoal: 'Gesprächsfluss aufrechterhalten',
@@ -32,6 +32,7 @@ export interface StrategistOptions {
   framework?: StrategistFrameworkOptions;
   temperature?: number;
   model?: string;
+  guards?: ConversationGuards;
 }
 
 export async function decideStrategy(
@@ -55,6 +56,7 @@ export async function decideStrategy(
           rejectionCount: context.memory.objectionsSeen.filter(o =>
             /kein interesse|keine zeit|nicht interessiert|hard_rejection/i.test(o)
           ).length,
+          guards: options?.guards,
         }),
       }],
       maxTokens: 500,

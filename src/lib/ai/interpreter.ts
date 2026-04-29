@@ -74,6 +74,9 @@ export async function interpretMessage(
       hiddenConcern: (parsed.hiddenConcern as string) || '',
       stateRecommendation: ((parsed.stateRecommendation as ConversationState) || 'lightly_engaged') as ConversationState,
       riskFlags: Array.isArray(parsed.riskFlags) ? parsed.riskFlags as string[] : [],
+      responseQuality: (parsed.responseQuality as string) as ('substantive' | 'minimal' | 'evasive' | 'confused' | 'duplicate') || 'substantive',
+      isExplicitRejection: typeof parsed.isExplicitRejection === 'boolean' ? parsed.isExplicitRejection : false,
+      isProblemSolved: typeof parsed.isProblemSolved === 'boolean' ? parsed.isProblemSolved : false,
     };
   } catch (err) {
     console.error('[ROYA] Interpreter failed:', err);
