@@ -14,6 +14,7 @@ import {
 import { DEFAULT_PERSONA } from '@/lib/types/conversation';
 import type { BusinessPersona } from '@/lib/types/conversation';
 import { supabase } from '@/lib/supabase';
+import OpenAI from 'openai';
 
 // ── Load campaign persona + framework for a given contact number ─────────────
 async function loadCampaignContext(contact: string): Promise<{
@@ -163,6 +164,50 @@ function ok(): NextResponse {
   return new NextResponse(TWIML_EMPTY, { headers: { 'Content-Type': 'text/xml' } });
 }
 
+// ── Transcribe WhatsApp voice message via OpenAI Whisper ─────────────────────
+async function transcribeVoiceMessage(
+  mediaUrl: string,
+  accountSid: string,
+  authToken: string,
+): Promise<string | null> {
+  try {
+    // Download audio from Twilio (requires basic auth)
+    const audioRes = await fetch(mediaUrl, {
+      headers: {
+        Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString('base64')}`,
+      },
+    });
+    if (!audioRes.ok) {
+      console.error('[ROYA] Failed to download voice message:', audioRes.status);
+      return null;
+    }
+
+    const audioBuffer = await audioRes.arrayBuffer();
+    const contentType = audioRes.headers.get('content-type') || 'audio/ogg';
+
+    // Determine file extension from content-type
+    const ext = contentType.includes('mp4') ? 'mp4'
+      : contentType.includes('mpeg') ? 'mp3'
+      : contentType.includes('wav') ? 'wav'
+      : 'ogg';
+
+    // Whisper requires a File object
+    const audioFile = new File([audioBuffer], `voice.${ext}`, { type: contentType });
+
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const transcription = await openai.audio.transcriptions.create({
+      file: audioFile,
+      model: 'whisper-1',
+      language: 'de',
+    });
+
+    return transcription.text?.trim() || null;
+  } catch (err) {
+    console.error('[ROYA] Whisper transcription error:', err);
+    return null;
+  }
+}
+
 async function sendTwilioMessage(
   to: string,
   body: string,
@@ -204,10 +249,17 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const from      = params['From'] || '';
     const msgBody   = (params['Body'] || '').trim();
     const messageSid = params['MessageSid'] || '';
+    const numMedia  = parseInt(params['NumMedia'] || '0', 10);
+    const mediaType = params['MediaContentType0'] || '';
+    const mediaUrl  = params['MediaUrl0'] || '';
     const channel: 'sms' | 'whatsapp' = from.startsWith('whatsapp:') ? 'whatsapp' : 'sms';
     const contact = from.replace('whatsapp:', '');
 
-    if (!contact || !msgBody) return ok();
+    if (!contact) return ok();
+
+    // ── Voice message: no text body but has audio media ──────────────────
+    const isVoiceMessage = numMedia > 0 && mediaType.startsWith('audio/');
+    if (!msgBody && !isVoiceMessage) return ok();
 
     // ── Signature validation (non-blocking in dev, enforced in prod) ──────
     const authToken = process.env.TWILIO_AUTH_TOKEN;
@@ -246,12 +298,27 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // This prevents Twilio from retrying due to slow AI processing (3 LLM calls)
     after(async () => {
       try {
+        // Transcribe voice message if needed
+        let finalMessage = msgBody;
+        if (isVoiceMessage && !msgBody) {
+          const accountSid = process.env.TWILIO_ACCOUNT_SID || '';
+          const authToken  = process.env.TWILIO_AUTH_TOKEN || '';
+          const transcript = await transcribeVoiceMessage(mediaUrl, accountSid, authToken);
+          if (!transcript) {
+            console.warn('[ROYA] Voice transcription failed or empty — skipping turn');
+            if (messageSid) await markProcessed(messageSid);
+            return;
+          }
+          console.log('[ROYA] Voice transcribed:', transcript);
+          finalMessage = transcript;
+        }
+
         const campaignCtx = await loadCampaignContext(contact);
         const result = await runConversationTurn({
           conversationId:  `twilio_${contact}`,
           leadName:        campaignCtx?.leadName ?? contact,
           channel,
-          incomingMessage: msgBody,
+          incomingMessage: finalMessage,
           leadContact:     contact,
           business:        campaignCtx?.business ?? DEFAULT_PERSONA,
           framework:       campaignCtx?.framework,
