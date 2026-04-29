@@ -151,3 +151,130 @@ export function shouldTriggerHandoff(
   }
   return { handoff: false, reason: '' };
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CONV PHASE — deterministic 6-phase state machine
+// ══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * The 6 conversation phases + 4 terminal states.
+ * Stored explicitly in DB for real conversations.
+ * Derived from guards for simulator.
+ */
+export type ConvPhase =
+  | 'OPENER'           // First message sent, awaiting lead response
+  | 'QUALIFY'          // Understand lead goal/situation
+  | 'DIAGNOSE'         // Deep-dive: max 2 diagnose questions total
+  | 'OFFER'            // Reframe + bridge to solution / soft pitch
+  | 'BOOKING'          // Negotiate appointment
+  | 'CLOSED_BOOKED'    // Terminal: appointment confirmed
+  | 'CLOSED_REJECTED'  // Terminal: 2+ rejections
+  | 'CLOSED_RESOLVED'  // Terminal: lead already has a solution
+  | 'CLOSED_TIMEOUT';  // Terminal: too many turns
+
+const TERMINAL_PHASES: ConvPhase[] = [
+  'CLOSED_BOOKED', 'CLOSED_REJECTED', 'CLOSED_RESOLVED', 'CLOSED_TIMEOUT',
+];
+
+export function isTerminalPhase(phase: ConvPhase): boolean {
+  return TERMINAL_PHASES.includes(phase);
+}
+
+export interface PhaseTransitionInput {
+  currentPhase: ConvPhase;
+  leadTurnCount: number;
+  rejectionCount: number;
+  diagnoseQuestionCount: number;
+  isProblemSolved: boolean;
+  bookingConfirmed?: boolean;
+  agentLastAction?: string; // NextAction value from previous turn
+}
+
+/**
+ * Pure function — given current state, returns next phase.
+ * 50 lines, guaranteed deterministic, fully testable.
+ */
+export function transitionPhase(input: PhaseTransitionInput): ConvPhase {
+  const {
+    currentPhase, leadTurnCount, rejectionCount,
+    diagnoseQuestionCount, isProblemSolved, bookingConfirmed, agentLastAction,
+  } = input;
+
+  // Terminal phases never transition
+  if (isTerminalPhase(currentPhase)) return currentPhase;
+
+  // ── Global overrides — always win, checked before phase logic ──
+  if (isProblemSolved)        return 'CLOSED_RESOLVED';
+  if (rejectionCount >= 2)    return 'CLOSED_REJECTED';
+  if (leadTurnCount >= 12)    return 'CLOSED_TIMEOUT';
+  if (bookingConfirmed)       return 'CLOSED_BOOKED';
+
+  // ── Phase-specific transitions ──
+  switch (currentPhase) {
+    case 'OPENER':
+      // Advances as soon as lead has responded
+      return leadTurnCount >= 1 ? 'QUALIFY' : 'OPENER';
+
+    case 'QUALIFY':
+      // After 2 lead turns, move to diagnose
+      return leadTurnCount >= 2 ? 'DIAGNOSE' : 'QUALIFY';
+
+    case 'DIAGNOSE':
+      // Move to offer if: 2 diagnose questions asked, soft rejection, or 4+ turns
+      if (diagnoseQuestionCount >= 2) return 'OFFER';
+      if (rejectionCount >= 1)        return 'OFFER';
+      if (leadTurnCount >= 4)         return 'OFFER';
+      return 'DIAGNOSE';
+
+    case 'OFFER':
+      // Move to booking when agent triggers book_call action
+      if (agentLastAction === 'book_call') return 'BOOKING';
+      return 'OFFER';
+
+    case 'BOOKING':
+      // Stays in BOOKING until confirmed or global override triggers
+      return 'BOOKING';
+
+    default:
+      return currentPhase;
+  }
+}
+
+/**
+ * Maps a ConvPhase to an instruction block injected into strategist/writer prompts.
+ * This is the "what you are allowed to do" contract per phase.
+ */
+export function phaseToSystemHint(phase: ConvPhase): string {
+  const hints: Record<ConvPhase, string> = {
+    OPENER:           'PHASE 1 — OPENER: Neugierde wecken. KEINE Diagnose-Fragen. KEIN Pitch. Maximal eine kurze offene Frage.',
+    QUALIFY:          'PHASE 2 — QUALIFY: Eine offene Frage zum Ziel/Situation. Noch kein Pitch. Kein Diagnose-Trichter.',
+    DIAGNOSE:         'PHASE 3 — DIAGNOSE: Maximal 2 Diagnose-Fragen im gesamten Gespräch. Danach SOFORT zu OFFER wechseln.',
+    OFFER:            'PHASE 4 — OFFER: Reframe + sanfter Pitch. Verbindung zwischen Lead-Ziel und Angebot herstellen. Termin vorschlagen.',
+    BOOKING:          'PHASE 5 — BOOKING: Datum/Zeit für Termin fixieren oder Buchungslink schicken. Kein neues Thema, kein neuer Pitch.',
+    CLOSED_BOOKED:    'TERMINAL: Buchung bestätigt.',
+    CLOSED_REJECTED:  'TERMINAL: Lead hat abgelehnt — kein weiterer Kontakt.',
+    CLOSED_RESOLVED:  'TERMINAL: Lead hat eigene Lösung — kein weiterer Kontakt.',
+    CLOSED_TIMEOUT:   'TERMINAL: Gesprächslimit erreicht — Handoff.',
+  };
+  return hints[phase] ?? '';
+}
+
+/**
+ * Derives the starting ConvPhase from guards data (for simulator / new threads).
+ * Does NOT replace the DB-persisted phase for real conversations.
+ */
+export function derivePhaseFromGuards(guards: {
+  turnCount: number;
+  rejectionCount: number;
+  diagnoseQuestionCount: number;
+  isProblemSolved: boolean;
+}): ConvPhase {
+  if (guards.isProblemSolved)       return 'CLOSED_RESOLVED';
+  if (guards.rejectionCount >= 2)   return 'CLOSED_REJECTED';
+  if (guards.turnCount >= 12)       return 'CLOSED_TIMEOUT';
+  if (guards.turnCount === 0)       return 'OPENER';
+  if (guards.turnCount === 1)       return 'QUALIFY';
+  if (guards.diagnoseQuestionCount >= 2 || guards.turnCount >= 4) return 'OFFER';
+  if (guards.turnCount >= 2)        return 'DIAGNOSE';
+  return 'QUALIFY';
+}

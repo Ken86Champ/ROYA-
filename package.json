@@ -7,7 +7,10 @@
     "build": "next build",
     "start": "next start",
     "worker": "tsx server/worker.ts",
-    "db:push": "drizzle-kit push"
+    "db:push": "drizzle-kit push",
+    "eval": "tsx scripts/eval.ts",
+    "eval:fast": "tsx scripts/eval.ts --fast",
+    "eval:verbose": "tsx scripts/eval.ts --verbose"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.52.0",

@@ -93,9 +93,46 @@ export const royaAgentThreads = pgTable("roya_agent_threads", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   contactId: text("contact_id").references(() => royaContacts.id).notNull(),
   state: contactStateEnum("state").default("not_contacted").notNull(),
+  convPhase: text("conv_phase").default("OPENER"),
   history: jsonb("history").$type<{ role: string; content: string; timestamp: string }[]>().default([]),
   lastActivity: timestamp("last_activity").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// ── Lead Profile — persistent, incremental memory per contact ────────────────
+export const leadProfiles = pgTable("lead_profiles", {
+  contactId: text("contact_id").primaryKey().references(() => royaContacts.id),
+  goal: text("goal"),
+  painPoint: text("pain_point"),
+  availability: text("availability"),
+  objections: jsonb("objections").$type<string[]>().default([]),
+  budgetSignals: jsonb("budget_signals").$type<string[]>().default([]),
+  interests: jsonb("interests").$type<string[]>().default([]),
+  rawNotes: text("raw_notes"),
+  updatedAtTurn: integer("updated_at_turn").default(0),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// ── Conversation Traces — one row per turn, full observability ───────────────
+export const conversationTraces = pgTable("conversation_traces", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  conversationId: text("conversation_id").notNull(),
+  contactId: text("contact_id"),
+  agencyId: text("agency_id"),
+  turnNumber: integer("turn_number").notNull(),
+  convPhase: text("conv_phase").notNull(),
+  leadMessage: text("lead_message").notNull(),
+  agentReply: text("agent_reply"),
+  nextAction: text("next_action"),
+  microIntent: text("micro_intent"),
+  guardsTriggered: jsonb("guards_triggered").$type<string[]>().default([]),
+  rejectionCount: integer("rejection_count").default(0),
+  diagnoseQCount: integer("diagnose_q_count").default(0),
+  interpretation: jsonb("interpretation"),
+  strategy: jsonb("strategy"),
+  durationMs: integer("duration_ms"),
+  model: text("model"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 export const royaAppointments = pgTable("roya_appointments", {

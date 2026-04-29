@@ -20,6 +20,12 @@ import {
   detectRepeatedLeadMessages,
   detectRepeatedAgentQuestions,
 } from '@/lib/conversation/guards';
+import {
+  derivePhaseFromGuards,
+  transitionPhase,
+  phaseToSystemHint,
+} from '@/lib/conversation/state-machine';
+import { traceTurn } from '@/lib/conversation/tracer';
 import type {
   ConversationContext,
   HistoryMessage,
@@ -275,6 +281,8 @@ export async function POST(req: NextRequest) {
   if (preRejectionCount >= 2) {
     return makeStopResponse();
   }
+
+  const context = {
       conversationId: 'simulator',
       leadName,
       channel: 'sms',
@@ -296,11 +304,47 @@ export async function POST(req: NextRequest) {
     const guards = buildGuards(historyMessages, message, interpretation);
 
     if (interpretation.isProblemSolved || guards.isProblemSolved) {
+      traceTurn({
+        conversationId: 'simulator',
+        turnNumber: leadTurns,
+        phase: 'CLOSED_RESOLVED',
+        leadMessage: message,
+        guardsTriggered: ['isProblemSolved'],
+        rejectionCount: guards.rejectionCount,
+        diagnoseQCount: guards.diagnoseQuestionCount,
+        durationMs: 0,
+        model: 'guards',
+      });
       return makeStopResponse();
     }
     if (guards.rejectionCount >= 2 || interpretation.isExplicitRejection) {
+      traceTurn({
+        conversationId: 'simulator',
+        turnNumber: leadTurns,
+        phase: 'CLOSED_REJECTED',
+        leadMessage: message,
+        guardsTriggered: ['rejectionCount >= 2'],
+        rejectionCount: guards.rejectionCount,
+        diagnoseQCount: guards.diagnoseQuestionCount,
+        durationMs: 0,
+        model: 'guards',
+      });
       return makeStopResponse();
     }
+
+    // ── Derive phase from guards and inject into strategist framework ──────────
+    const convPhase = derivePhaseFromGuards({
+      turnCount: guards.turnCount,
+      rejectionCount: guards.rejectionCount,
+      diagnoseQuestionCount: guards.diagnoseQuestionCount,
+      isProblemSolved: guards.isProblemSolved,
+    });
+    const phaseHint = phaseToSystemHint(convPhase);
+    // Prepend phase hint to strategist instructions so it sees current phase context
+    strategistFramework.strategistInstructions = phaseHint
+      + (strategistFramework.strategistInstructions ? '\n\n' + strategistFramework.strategistInstructions : '');
+
+    const pipelineStartMs = Date.now();
 
     const strategy = await decideStrategy(context, interpretation, {
       framework: strategistFramework,
@@ -369,6 +413,26 @@ export async function POST(req: NextRequest) {
 
     // Track conversation event (non-blocking)
     const frameworkVersion = evolved?.version ?? 0;
+    const pipelineDurationMs = Date.now() - pipelineStartMs;
+
+    // ── Full turn trace for observability ─────────────────────────────────────
+    traceTurn({
+      conversationId: 'simulator',
+      turnNumber: leadTurns,
+      phase: convPhase,
+      leadMessage: message,
+      agentReply: reply,
+      nextAction: strategy.nextAction,
+      microIntent: interpretation.microIntent,
+      guardsTriggered: [],
+      rejectionCount: guards.rejectionCount,
+      diagnoseQCount: guards.diagnoseQuestionCount,
+      interpretation,
+      strategy,
+      durationMs: pipelineDurationMs,
+      model: pipelineModel,
+    });
+
     supabase.from('conversation_events').insert([{
       conversation_id: 'simulator',
       channel: 'sms',

@@ -19,6 +19,9 @@ import {
   calculateScoreDeltas,
   applyScoreDeltas,
   shouldTriggerHandoff,
+  derivePhaseFromGuards,
+  transitionPhase,
+  phaseToSystemHint,
 } from '@/lib/conversation/state-machine';
 import {
   getConversationContext,
@@ -32,6 +35,13 @@ import { loadEvolvedFramework } from '@/lib/framework-evolution';
 import { SYSTEM_FRAMEWORKS } from '@/lib/framework-store';
 import { supabase } from '@/lib/supabase';
 import { fetchCalendarSlotsForWriter } from '@/lib/calendar-slots';
+import {
+  buildGuards,
+  detectProblemSolved,
+  countExplicitRejections,
+} from '@/lib/conversation/guards';
+import { updateLeadProfile, profileToContextBlock } from '@/lib/conversation/lead-profiler';
+import { traceTurn } from '@/lib/conversation/tracer';
 import type {
   OrchestratorResult,
   BusinessPersona,
@@ -140,19 +150,146 @@ export async function runConversationTurn(params: TurnParams): Promise<Orchestra
     generatedByAI:  false,
   }).catch(() => {});
 
+  // ── Pre-checks: deterministic guards before LLM call ─────────────────────
+  const historyMsgs = context.history;
+  const guards = buildGuards(
+    historyMsgs,
+    params.incomingMessage,
+  );
+  const turnStart = Date.now();
+
+  // Hard stops — no LLM needed
+  const GOODBYE = 'Alles gut. Meld dich gern, wenn das Thema wieder aktuell wird.';
+  if (guards.isProblemSolved || detectProblemSolved(params.incomingMessage)) {
+    traceTurn({
+      conversationId: params.conversationId,
+      contactId: params.leadId,
+      turnNumber: guards.turnCount,
+      phase: 'CLOSED_RESOLVED',
+      leadMessage: params.incomingMessage,
+      agentReply: GOODBYE,
+      nextAction: 'stop',
+      guardsTriggered: ['isProblemSolved'],
+      rejectionCount: guards.rejectionCount,
+      diagnoseQCount: guards.diagnoseQuestionCount,
+      durationMs: Date.now() - turnStart,
+      model: 'guards',
+    });
+    return {
+      action: 'stop', reply: null,
+      newState: 'dead', scores: context.scores,
+      interpretation: { explicitMeaning: 'Problem gelöst', implicitMeaning: '', emotionalTone: 'neutral', microIntent: 'other', likelyNeed: '', hiddenConcern: '', stateRecommendation: 'dead', riskFlags: [] },
+      strategy: { primaryGoal: 'stop', nextAction: 'stop', angle: '', thingsToAvoid: [], desiredTone: 'neutral', maxLength: 'short' },
+      confidence: 100,
+    };
+  }
+  if (guards.rejectionCount >= 2) {
+    traceTurn({
+      conversationId: params.conversationId,
+      contactId: params.leadId,
+      turnNumber: guards.turnCount,
+      phase: 'CLOSED_REJECTED',
+      leadMessage: params.incomingMessage,
+      agentReply: GOODBYE,
+      nextAction: 'stop',
+      guardsTriggered: ['rejectionCount >= 2'],
+      rejectionCount: guards.rejectionCount,
+      diagnoseQCount: guards.diagnoseQuestionCount,
+      durationMs: Date.now() - turnStart,
+      model: 'guards',
+    });
+    return {
+      action: 'stop', reply: null,
+      newState: 'dead', scores: context.scores,
+      interpretation: { explicitMeaning: 'Ablehnung', implicitMeaning: '', emotionalTone: 'negative', microIntent: 'hard_rejection', likelyNeed: '', hiddenConcern: '', stateRecommendation: 'dead', riskFlags: ['hard_rejection'] },
+      strategy: { primaryGoal: 'stop', nextAction: 'stop', angle: '', thingsToAvoid: [], desiredTone: 'neutral', maxLength: 'short' },
+      confidence: 100,
+    };
+  }
+  if (guards.turnCount >= 15 || guards.duplicateAgentQuestions >= 3 || guards.duplicateLeadMessages >= 3) {
+    traceTurn({
+      conversationId: params.conversationId,
+      contactId: params.leadId,
+      turnNumber: guards.turnCount,
+      phase: 'CLOSED_TIMEOUT',
+      leadMessage: params.incomingMessage,
+      nextAction: 'handoff',
+      guardsTriggered: ['loop_or_timeout'],
+      rejectionCount: guards.rejectionCount,
+      diagnoseQCount: guards.diagnoseQuestionCount,
+      durationMs: Date.now() - turnStart,
+      model: 'guards',
+    });
+    return {
+      action: 'handoff', reply: null,
+      newState: 'handoff_required', scores: context.scores,
+      interpretation: { explicitMeaning: 'Timeout', implicitMeaning: '', emotionalTone: 'neutral', microIntent: 'other', likelyNeed: '', hiddenConcern: '', stateRecommendation: 'handoff_required', riskFlags: [] },
+      strategy: { primaryGoal: 'handoff', nextAction: 'handoff', angle: '', thingsToAvoid: [], desiredTone: 'neutral', maxLength: 'short' },
+      confidence: 100,
+    };
+  }
+
+  // ── Derive phase + inject hint into strategist ─────────────────────────────
+  const convPhase = derivePhaseFromGuards({
+    turnCount: guards.turnCount,
+    rejectionCount: guards.rejectionCount,
+    diagnoseQuestionCount: guards.diagnoseQuestionCount,
+    isProblemSolved: guards.isProblemSolved,
+  });
+  const phaseHint = phaseToSystemHint(convPhase);
+  const strategistInstructions = phaseHint
+    + (fw.strategistInstructions ? '\n\n' + fw.strategistInstructions : '');
+
+  // ── Update lead profile incrementally (non-blocking, runs in parallel) ─────
+  const leadProfilePromise = params.leadId
+    ? updateLeadProfile(params.leadId, params.incomingMessage, guards.turnCount)
+    : Promise.resolve(null);
+
   // ── Phase 1A: Interpret ───────────────────────────────────────────────────
   const interpretation = await interpretMessage(context, params.incomingMessage, {
     framework: { interpreterInstructions: fw.interpreterInstructions },
     temperature: fw.temperature,
   });
 
+  // Post-interpreter rejection check
+  if (interpretation.isExplicitRejection || interpretation.isProblemSolved) {
+    traceTurn({
+      conversationId: params.conversationId,
+      contactId: params.leadId,
+      turnNumber: guards.turnCount,
+      phase: interpretation.isProblemSolved ? 'CLOSED_RESOLVED' : 'CLOSED_REJECTED',
+      leadMessage: params.incomingMessage,
+      nextAction: 'stop',
+      microIntent: interpretation.microIntent,
+      guardsTriggered: ['interpreter_rejection'],
+      rejectionCount: guards.rejectionCount,
+      diagnoseQCount: guards.diagnoseQuestionCount,
+      interpretation,
+      durationMs: Date.now() - turnStart,
+      model: 'gpt-4o-mini',
+    });
+    return {
+      action: 'stop', reply: null,
+      newState: 'dead', scores: context.scores,
+      interpretation,
+      strategy: { primaryGoal: 'stop', nextAction: 'stop', angle: '', thingsToAvoid: [], desiredTone: 'neutral', maxLength: 'short' },
+      confidence: 100,
+    };
+  }
+
   // ── Phase 1B: Strategy ────────────────────────────────────────────────────
   const strategy = await decideStrategy(context, interpretation, {
-    framework: { strategistInstructions: fw.strategistInstructions, rules: fw.rules },
+    framework: { strategistInstructions, rules: fw.rules },
     temperature: fw.temperature,
+    guards,
   });
 
-  // ── Fetch calendar slots if booking action ────────────────────────────────
+  // Force soft_pitch if diagnose-loop detected
+  if (strategy.nextAction === 'ask_question' && guards.diagnoseQuestionCount >= 3) {
+    (strategy as { nextAction: string }).nextAction = 'soft_pitch';
+  }
+
+  // ── Fetch calendar slots + lead profile in parallel ──────────────────────
   let availableSlots: string | undefined;
   let hasCalendar: boolean | undefined;
   if (strategy.nextAction === 'book_call') {
@@ -161,6 +298,10 @@ export async function runConversationTurn(params: TurnParams): Promise<Orchestra
     hasCalendar = calResult.connected;
   }
 
+  // Await lead profile (was started before interpreter call)
+  const leadProfile = await leadProfilePromise;
+  const profileBlock = leadProfile ? profileToContextBlock(leadProfile) : '';
+
   const currentDate = new Date().toLocaleDateString('de-CH', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
   });
@@ -168,7 +309,7 @@ export async function runConversationTurn(params: TurnParams): Promise<Orchestra
   // ── Phase 2: Write + Check ────────────────────────────────────────────────
   const phase2 = await writeAndCheck(context, params.incomingMessage, interpretation, strategy, {
     framework: {
-      writerInstructions: fw.writerInstructions,
+      writerInstructions: fw.writerInstructions + (profileBlock ? `\n\nBEKANNTE FAKTEN ZUM LEAD:\n${profileBlock}` : ''),
       rules: fw.rules,
       forbiddenPhrases: fw.forbiddenPhrases,
       exampleMessages: fw.exampleMessages,
@@ -232,8 +373,27 @@ export async function runConversationTurn(params: TurnParams): Promise<Orchestra
 
   // ── Async persistence (non-blocking) ─────────────────────────────────────
   const outcome = detectOutcome(newState, action, interpretation);
+  const pipelineDurationMs = Date.now() - turnStart;
 
   Promise.all([
+    // Full turn trace — primary observability record
+    Promise.resolve(traceTurn({
+      conversationId: params.conversationId,
+      contactId:      params.leadId,
+      turnNumber:     guards.turnCount,
+      phase:          convPhase,
+      leadMessage:    params.incomingMessage,
+      agentReply:     reply ?? undefined,
+      nextAction:     strategy.nextAction,
+      microIntent:    interpretation.microIntent,
+      guardsTriggered: [],
+      rejectionCount: guards.rejectionCount,
+      diagnoseQCount: guards.diagnoseQuestionCount,
+      interpretation,
+      strategy,
+      durationMs:     pipelineDurationMs,
+      model:          'gpt-4o-mini',
+    })),
     updateConversationState({
       conversationId:         params.conversationId,
       state:                  newState,
