@@ -89,12 +89,18 @@ function buildMemoryFromHistory(history: { role: string; body: string }[]): Conv
     if (msg.length > 5) keyFacts.push(`Lead sagte: "${msg}"`);
   }
 
+  // Detect rejections from lead messages
+  const REJECTION_PATTERN = /\b(nein|kein interesse|keine zeit|nicht interessiert|kein bedarf|danke nein|passt nicht|möchte nicht|will nicht|hör auf|bitte nicht mehr|abmelden|stop)\b/i;
+  const objectionsSeen = leadMsgs
+    .filter(msg => REJECTION_PATTERN.test(msg))
+    .slice(-5);
+
   return {
     summary: leadMsgs.length > 0
       ? `${leadMsgs.length} Lead-Nachrichten bisher. Letzte: "${leadMsgs[leadMsgs.length - 1]}"`
       : '',
     keyFacts: keyFacts.slice(-5),
-    objectionsSeen: [],
+    objectionsSeen,
     interests,
     constraints: [],
     lastSuccessfulAngle: agentMsgs.length > 0 ? agentMsgs[agentMsgs.length - 1] : '',

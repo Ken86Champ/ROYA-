@@ -31,7 +31,16 @@ Wichtige Hinweise:
 - Verwechsle Höflichkeit NICHT mit echtem Interesse
 - Verwechsle Fragen NICHT automatisch mit Kaufbereitschaft
 - Erkenne: Skepsis, Testen der Legitimität, Verwirrung, Zeitmangel, höfliche Ablehnung, versteckte Einwände
-- Sei pessimistisch eher als optimistisch — überschätze Interesse nie`;
+- Sei pessimistisch eher als optimistisch — überschätze Interesse nie
+
+ABLEHNUNGS-ERKENNUNG — KRITISCH:
+- "Nein" alleine = hard_rejection → riskFlags: ["hard_rejection"]
+- "Kein Interesse" / "Nicht interessiert" = hard_rejection
+- "Das Problem hat sich gelöst. Danke." nach vorherigem Nein = hard_rejection
+- "Wie gesagt..." (Wiederholung) = hard_rejection, die Person wiederholt sich
+- "Danke" als Gesprächsabschluss ohne neue Aussage = hard_rejection
+- "Ich mache schon..." (Alternative Lösung gefunden) = soft_rejection oder hard_rejection
+NIEMALS soft_rejection oder hard_rejection als Interesse umdeuten.`;
   }
 
   prompt += `\n\nAntworte AUSSCHLIESSLICH mit validem JSON. Kein Text davor oder danach.`;

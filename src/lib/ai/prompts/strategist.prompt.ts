@@ -62,6 +62,8 @@ STOPP-REGELN — nextAction MUSS "stop" sein wenn:
 - microIntent ist "hard_rejection" ODER riskFlags enthält "hard_rejection"
 - rejectionCount >= 2
 - turnCount >= 4 und friction >= 70 und temperature <= 25
+- Die Person sagt "Danke" als Gesprächsabschluss oder wiederholt ihre Ablehnung ("Wie gesagt...")
+- Die Person hat eine Alternative gefunden ("Ich mache schon...", "Problem gelöst")
 Dann: stop. Kein weiteres Argument, keine weitere Frage, kein Pitch. Gesprächsende respektieren.`;
   }
 
