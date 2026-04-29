@@ -56,14 +56,15 @@ const REJECTION_PATTERNS = [
 ];
 
 const PROBLEM_SOLVED_PATTERNS = [
-  /\bmache\s*schon\b/i,
-  /\bhabe\s*schon\b/i,
+  /\bmache\s+schon\s+(training|sport|coaching|gym|crossfit|fitnessstudio)\b/i,
+  /\bhabe\s+schon\s+(einen?\s+)?(trainer|coach|plan|programm|mitgliedschaft)\b/i,
   /\bproblem\s*(hat\s*sich\s*)?(gel[oö]st|ist\s*weg)\b/i,
   /\bl[aä]uft\s*schon\b/i,
   /\bbin\s*versorgt\b/i,
   /\bbereits\s*(trainer|coach|gym|fitnessstudio)\b/i,
   /\bfunktioniert\s*schon\b/i,
   /\bklappt\s*schon\b/i,
+  /\bhabe\s+(bereits|schon)\s+jemanden?\s+(der|die|das)\b/i,
 ];
 
 const DIAGNOSE_PATTERNS = [
