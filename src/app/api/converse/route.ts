@@ -165,6 +165,8 @@ export async function POST(req: NextRequest) {
     const forbiddenPhrases = fw.forbiddenPhrases ?? [];
     const temperature = fw.temperature ?? 0.5;
     const customSystemPrompt = (bizAny?.systemPrompt as string | undefined) ?? '';
+    // Model selection — passed from campaign's aiFramework.standardModel, default gpt-4o-mini
+    const pipelineModel = (bizAny?.standardModel as string | undefined) || 'gpt-4o-mini';
 
     const writerFramework = {
       writerInstructions: fw.writerInstructions,
@@ -216,10 +218,12 @@ export async function POST(req: NextRequest) {
     const interpretation = await interpretMessage(context, message, {
       framework: interpreterFramework,
       temperature: 0.3,
+      model: pipelineModel,
     });
     const strategy = await decideStrategy(context, interpretation, {
       framework: strategistFramework,
       temperature: 0.3,
+      model: pipelineModel,
     });
 
     // ── Fetch real calendar slots if booking action ──────────────────────────
@@ -232,6 +236,7 @@ export async function POST(req: NextRequest) {
     const phase2 = await writeAndCheck(context, message, interpretation, strategy, {
       framework: writerFramework,
       temperature,
+      model: pipelineModel,
     });
 
     // Ensure we always have a reply

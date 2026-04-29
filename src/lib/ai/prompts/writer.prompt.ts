@@ -76,6 +76,13 @@ REGEL: Nenne ausschliesslich Termine aus dieser Liste. Kein Termin darf in der V
     }
   }
   if (persona.doNotSay) prompt += `\n\nTABU-THEMEN — NIEMALS erwähnen:\n${persona.doNotSay}`;
+
+  // Hardcoded — cannot be overridden by any framework or configuration
+  prompt += `\n\nABSOLUTE PFLICHT-REGEL — NIEMALS VERLETZEN:
+- Erwähne NIEMALS "Roya", "Reaktivierungsprogramm", "Kampagne" oder externe Automatisierungsplattformen.
+- Du bist ${persona.agentName} bei ${persona.companyName} — kein Bot, kein Marketingsystem, keine Plattform.
+- Jede Nachricht muss konkreten Bezug zum Angebot haben: ${persona.offer || persona.allServices || 'unserem Angebot'}.
+- Kein Outreach ohne Produktkontext.`;
   if (persona.insiderKnowledge) prompt += `\n\nINSIDER-WISSEN (natürlich einbauen, nicht forcieren):\n${persona.insiderKnowledge}`;
   if (persona.exampleConversation) prompt += `\n\nBEISPIEL-GESPRÄCHSSTIL:\n${persona.exampleConversation}`;
 
@@ -101,19 +108,11 @@ SCHREIBREGELN — diese gelten absolut:
 - Schreib auf Deutsch, Schweizer Wendungen erlaubt.`;
   }
 
+  // Name usage — hardcoded, cannot be overridden
+  prompt += `\n\nNAMENS-REGEL — ABSOLUT VERBINDLICH:\n- Nenne den Lead-Namen NIEMALS in der Antwort. Kein "Andrea," kein "Hallo Andrea" — nichts.\n- Verwende ausschliesslich "du". Der Name klingt in jeder Folgenachricht roboterhaft und aufgesetzt.\n- Einzige Ausnahme: allererste Opener-Nachricht (die wird separat generiert, nicht hier).`;
+
   // Checker always runs — regardless of learnings
-  prompt += `
-
-Nach der Nachricht: Prüfe sie sofort als Checker.
-Prüfkriterien:
-1. Klingt sie zu perfekt oder zu geschrieben?
-2. Klingt sie nach Bot oder Script?
-3. Ist sie zu lang (mehr als 3 Sätze)?
-4. Ist sie zu pushy oder aufdringlich?
-5. Reagiert sie auf den tatsächlichen Subtext?
-6. Sollte hier ein Mensch übernehmen?
-
-Wenn nötig: kürze oder überarbeite die Nachricht.`;
+  prompt += `\n\nNach der Nachricht: Prüfe sie sofort als Checker.\nPrüfkriterien:\n1. Klingt sie zu perfekt oder zu geschrieben?\n2. Klingt sie nach Bot oder Script?\n3. Ist sie zu lang (mehr als 3 Sätze)?\n4. Ist sie zu pushy oder aufdringlich?\n5. Reagiert sie auf den tatsächlichen Subtext?\n6. Enthält sie den Namen des Leads? (Falls ja — sofort entfernen)\n7. Sollte hier ein Mensch übernehmen?\n\nWenn nötig: kürze oder überarbeite die Nachricht.`;
 
   // ── Rules (from framework or campaign) ──
   const activeRules = framework?.rules ?? [];
@@ -175,11 +174,14 @@ export function buildWriterUserPrompt(params: {
   historyText: string;
   interpretation: MessageInterpretation;
   strategy: StrategyDecision;
+  turnCount: number;
 }): string {
   const avoidList = params.strategy.thingsToAvoid.map(t => `- ${t}`).join('\n');
 
-  return `LEAD: ${params.leadName}
+  return `GESPRÄCHSRUNDE: ${params.turnCount}
 ${params.historyText ? `VERLAUF:\n${params.historyText}\n\n` : ''}LETZTE NACHRICHT: "${params.incomingMessage}"
+
+WICHTIG: Den Namen des Leads NIEMALS in der Antwort verwenden. Nur "du".
 
 INTERPRETATION:
 - Meint wirklich: ${params.interpretation.implicitMeaning}

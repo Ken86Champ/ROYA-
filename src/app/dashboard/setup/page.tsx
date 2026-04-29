@@ -9,6 +9,14 @@ interface Msg {
   id: string;
   role: "assistant" | "user";
   text: string;
+  suggestion?: string;
+}
+
+function parseSuggestion(text: string): { clean: string; suggestion: string | null } {
+  const match = text.match(/\nBEISPIEL:\s*"([^"]+)"/);
+  if (!match) return { clean: text, suggestion: null };
+  const clean = text.replace(/\n+BEISPIEL:\s*"[^"]+"\s*$/m, '').trim();
+  return { clean, suggestion: match[1] };
 }
 
 interface SetupData {
@@ -126,7 +134,12 @@ function SetupPageInner() {
   }, [messages, history, currentBlock, isComplete, setupData, started]);
 
   function addMsg(role: "assistant" | "user", text: string) {
-    setMessages(prev => [...prev, { id: crypto.randomUUID(), role, text }]);
+    if (role === "assistant") {
+      const { clean, suggestion } = parseSuggestion(text);
+      setMessages(prev => [...prev, { id: crypto.randomUUID(), role, text: clean, suggestion: suggestion ?? undefined }]);
+    } else {
+      setMessages(prev => [...prev, { id: crypto.randomUUID(), role, text }]);
+    }
   }
 
   // ── Start conversation ─────────────────────────────────────────────────────
@@ -449,6 +462,22 @@ function SetupPageInner() {
                 )}
               </div>
             )}
+
+            {/* Suggestion chip — shown below last assistant message */}
+            {!thinking && !isComplete && (() => {
+              const lastSugg = [...messages].reverse().find(m => m.role === "assistant")?.suggestion;
+              return lastSugg ? (
+                <div className="px-6 pb-2">
+                  <button
+                    onClick={() => { setInput(lastSugg); inputRef.current?.focus(); }}
+                    className="flex items-center gap-3 w-full px-4 py-3 bg-violet-50 border border-violet-200 rounded-xl hover:bg-violet-100 transition-colors group text-left">
+                    <span className="text-violet-400 shrink-0 text-base">💡</span>
+                    <span className="flex-1 text-xs text-violet-700 italic">&ldquo;{lastSugg}&rdquo;</span>
+                    <span className="text-[10px] text-violet-400 group-hover:text-violet-600 font-semibold shrink-0 whitespace-nowrap">Übernehmen →</span>
+                  </button>
+                </div>
+              ) : null;
+            })()}
 
             {/* Input */}
             {!isComplete && (

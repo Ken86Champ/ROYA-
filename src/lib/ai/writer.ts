@@ -4,7 +4,7 @@
  * Uses Sonnet for higher quality human-like output.
  */
 
-import Anthropic from '@anthropic-ai/sdk';
+import { llmChat } from '@/lib/ai/llm-client';
 import { buildWriterAndCheckerPrompt, buildWriterUserPrompt } from './prompts/writer.prompt';
 import type { WriterFrameworkOptions } from './prompts/writer.prompt';
 import type {
@@ -15,11 +15,10 @@ import type {
 } from '@/lib/types/conversation';
 import { historyToText } from './interpreter';
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
 export interface WriteOptions {
   framework?: WriterFrameworkOptions;
   temperature?: number;
+  model?: string;
 }
 
 export async function writeAndCheck(
@@ -37,9 +36,8 @@ export async function writeAndCheck(
   // Only skip if explicitly flagged as silent handoff
 
   try {
-    const stream = client.messages.stream({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 600,
+    const raw = (await llmChat({
+      model: options?.model || 'gpt-4o-mini',
       system: buildWriterAndCheckerPrompt(context.business, options?.framework),
       messages: [{
         role: 'user',
@@ -49,12 +47,12 @@ export async function writeAndCheck(
           historyText: historyToText(context, 8),
           interpretation,
           strategy,
+          turnCount: context.history.length,
         }),
       }],
-    });
-    const response = await stream.finalMessage();
-    const textBlock = response.content.find(b => b.type === 'text') as { text: string } | undefined;
-    const raw = (textBlock?.text ?? '').trim();
+      maxTokens: 600,
+      temperature: options?.temperature,
+    })).trim();
     let json = raw.replace(/^```json?\s*\n?/, '').replace(/\n?\s*```$/, '');
     const braceStart = json.indexOf('{');
     const braceEnd = json.lastIndexOf('}');
@@ -129,7 +127,8 @@ function validateResponse(message: string, framework?: WriterFrameworkOptions): 
   if (rules.includes('end_with_question') && !result.includes('?')) {
     const isClose = /\b(trage dich|eingetragen|rufe dich|melde mich|bis\s+(Montag|Dienstag|Mittwoch|Donnerstag|Freitag|Samstag|Sonntag|dann)|steht\.?)\b/i.test(result);
     const isGoodbye = /\b(alles gute|viel erfolg|melde dich|tsch[uü]ss|ciao|bye)\b/i.test(result);
-    if (!isClose && !isGoodbye && result.length > 10) {
+    const isRejection = /\b(verstanden|respektiere|kein interesse|keine zeit|nicht interessiert|priorität|andere priorit|nachvollziehbar|okay das|ok das)\b/i.test(result);
+    if (!isClose && !isGoodbye && !isRejection && result.length > 10) {
       result = result.replace(/[.!]?\s*$/, '') + ', was meinst du?';
     }
   }

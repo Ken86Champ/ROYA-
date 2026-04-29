@@ -6,9 +6,10 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import Anthropic from '@anthropic-ai/sdk';
+import { llmChat } from '@/lib/ai/llm-client';
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+// Setup wizard uses GPT-4o mini — fast, cheap, follows instructions well
+const SETUP_MODEL = 'gpt-4o-mini';
 
 const SETUP_SYSTEM_PROMPT = `Du bist ein Setup-Agent für KI-gestützte Lead-Reaktivierungssysteme (RoyaGPT).
 
@@ -40,6 +41,10 @@ BEHAVIOUR:
 - Du gehst erst zum nächsten Punkt, wenn der aktuelle vollständig beantwortet ist
 - Du akzeptierst keine vagen Antworten → du präzisierst aktiv nach
 - Du zwingst den User zu klaren, konkreten Aussagen
+- Nach JEDER Frage hängst du IMMER eine realistische Beispielantwort an — neue Zeile, exaktes Format:
+  BEISPIEL: "konkrete Beispielantwort"
+  Nutze branchenspezifische Beispiele (Fitness, Coaching, Beratung, SaaS etc.).
+  Wenn aus dem bisherigen Gespräch schon Kontext bekannt ist (Branche, Angebot), passe das Beispiel direkt auf den Kunden an.
 
 FRAGEN-BLÖCKE:
 
@@ -103,6 +108,10 @@ BLOCK 7: GRENZEN
 45. Welche Fragen darf der Agent NICHT beantworten?
 46. Welche Themen sind tabu?
 47. Was darf der Agent niemals sagen?
+    → PFLICHT (unabhängig von der Antwort immer in doNotSay aufnehmen):
+       Der Agent nennt NIEMALS „Roya", „Reaktivierungsprogramm", „Kampagne" oder externe Automatisierungsplattformen.
+       Er tritt ausschliesslich als Mitarbeiter des Unternehmens auf.
+       Jeder Outreach enthält konkreten Bezug zum Produkt oder der Dienstleistung des Unternehmens.
 
 BLOCK 8: ESKALATION & LOGIK
 48. Was passiert bei Interesse?
@@ -148,7 +157,7 @@ SETUP_COMPLETE
   "afterCta": "Was nach Terminannahme passiert",
   "bookingType": "phone|zoom|in_person",
   "urgency": "Dringlichkeit falls vorhanden",
-  "doNotSay": "Tabu-Themen und verbotene Aussagen",
+  "doNotSay": "IMMER ENTHALTEN: Kein Hinweis auf Roya, Reaktivierungsprogramm, Kampagne oder externe Automatisierung. Agent = Mitarbeiter des Unternehmens, nicht einer Plattform. + weitere Tabu-Themen aus Block 7",
   "insiderKnowledge": "Wichtiges Insider-Wissen für den Agent",
   "exampleConversation": "Kurzes Gesprächsbeispiel im richtigen Stil",
   "language": "du|sie",
@@ -186,14 +195,12 @@ export async function POST(req: NextRequest) {
       { role: 'user', content: message },
     ];
 
-    const response = await client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 6000,
+    const raw = await llmChat({
+      model: SETUP_MODEL,
       system: SETUP_SYSTEM_PROMPT,
       messages,
+      maxTokens: 6000,
     });
-
-    const raw = response.content.find(b => b.type === 'text')?.text ?? '';
 
     // Detect completion signal
     const completionIdx = raw.indexOf('SETUP_COMPLETE');

@@ -51,7 +51,12 @@ Richtlinien:
 - Referenziere spezifische Details aus dem Kontakt-Profil
 
 Kunden-Angebot: ${input.clientContext}
-${input.calendarUrl ? `Kalender-Link: ${input.calendarUrl}` : ""}`,
+${input.calendarUrl ? `Kalender-Link: ${input.calendarUrl}` : ""}
+
+ABSOLUTE PFLICHT-REGELN — NIEMALS VERLETZEN:
+- Erwähne NIEMALS "Roya", "Reaktivierungsprogramm", "Kampagne" oder externe Automatisierungstools.
+- Der Agent agiert ausschliesslich als Mitarbeiter des anbietenden Unternehmens — kein Bot, keine Plattform.
+- Jede Nachricht hat konkreten Bezug zum Kunden-Angebot: ${input.clientContext}`,
     messages: [{
       role: "user",
       content: `Erstelle Outreach für:

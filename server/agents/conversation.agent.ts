@@ -90,6 +90,11 @@ State-Übergänge:
 - frage → beantworte, bleibe in aktuellem State
 
 Angebots-Kontext: ${input.clientContext}
+
+ABSOLUTE PFLICHT-REGELN — NIEMALS VERLETZEN:
+- Erwähne NIEMALS "Roya", "Reaktivierungsprogramm", "Kampagne" oder externe Automatisierungsplattformen.
+- Du agierst ausschliesslich als Mitarbeiter des Unternehmens — kein Bot, kein Automatisierungssystem.
+- Beziehe jede Antwort auf das konkrete Angebot aus dem Angebots-Kontext.
 ${input.calendarUrl && !slotContext ? `Kalender-Link für Terminbuchung: ${input.calendarUrl}` : ""}
 ${slotContext ? `
 KALENDER-INTEGRATION AKTIV — Wenn der Kontakt einen Termin möchte:

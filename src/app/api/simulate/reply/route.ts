@@ -1,19 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
+import { llmChat } from "@/lib/ai/llm-client";
 import type { AIFramework } from "@/lib/campaign-store";
-
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-// Map model IDs to Anthropic model strings
-const MODEL_MAP: Record<string, string> = {
-  "claude-haiku-4-5-20251001": "claude-haiku-4-5-20251001",
-  "claude-sonnet-4-6":         "claude-sonnet-4-6",
-  "claude-opus-4-6":           "claude-opus-4-6",
-  // OpenAI/Google not yet wired — fall back to Sonnet
-  "gpt-4o-mini":               "claude-sonnet-4-6",
-  "gpt-4o":                    "claude-sonnet-4-6",
-  "gemini-2.5-flash":          "claude-sonnet-4-6",
-};
 
 const RULE_TEXT: Record<string, string> = {
   max_2_sentences:    "Antworte mit maximal 2 kurzen Sätzen.",
@@ -54,11 +41,11 @@ export async function POST(req: NextRequest) {
     framework?: AIFramework;
   } = await req.json();
 
-  // Determine which model to use
+  // Determine which model to use — model IDs are passed through directly
   const fw = framework;
   const escalate = fw ? shouldEscalate(history, message, fw.escalation) : false;
   const modelId = fw
-    ? MODEL_MAP[escalate ? fw.premiumModel : fw.standardModel] ?? "claude-sonnet-4-6"
+    ? (escalate ? fw.premiumModel : fw.standardModel) ?? "gpt-4o-mini"
     : "claude-haiku-4-5-20251001";
 
   const agentName = fw?.agentName || business?.agentName || "Lena";
@@ -96,14 +83,12 @@ Antworte NUR mit JSON: {"reply": "deine Antwort"}`;
   const userPrompt = `Bisheriger Verlauf:\n${historyText}\n${leadName}: ${message}\n\n→ Deine Antwort als ${agentName}:`;
 
   try {
-    const response = await client.messages.create({
+    const text = (await llmChat({
       model: modelId,
-      max_tokens: 300,
       system: systemPrompt,
       messages: [{ role: "user", content: userPrompt }],
-    });
-
-    const text = ((response.content[0] as { text: string }).text || "").trim();
+      maxTokens: 300,
+    })).trim();
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) throw new Error("No JSON");
     const { reply } = JSON.parse(match[0]);

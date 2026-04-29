@@ -55,8 +55,8 @@ export const AI_MODELS: { id: AIModelId; label: string; badge: string; provider:
   { id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5",   badge: "Schnell",    provider: "anthropic", available: true,  desc: "Günstig · schnell · Routing & Klassifizierung" },
   { id: "claude-sonnet-4-6",         label: "Claude Sonnet 4.6",  badge: "Standard",   provider: "anthropic", available: true,  desc: "Beste Balance · empfohlen für Reply-Handling" },
   { id: "claude-opus-4-6",           label: "Claude Opus 4.6",    badge: "Premium",    provider: "anthropic", available: true,  desc: "Stärkstes Modell · schwierige Einwände & High-Value" },
-  { id: "gpt-4o-mini",               label: "GPT-4o mini",        badge: "Bald",       provider: "openai",    available: false, desc: "OpenAI · günstig · agentische Abläufe" },
-  { id: "gpt-4o",                    label: "GPT-4o",             badge: "Bald",       provider: "openai",    available: false, desc: "OpenAI · Frontier · komplexe Workflows" },
+  { id: "gpt-4o-mini",               label: "GPT-4o mini",        badge: "OpenAI",     provider: "openai",    available: true,  desc: "OpenAI · günstig · schnell · empfohlen für Setup & Agenten" },
+  { id: "gpt-4o",                    label: "GPT-4o",             badge: "OpenAI",     provider: "openai",    available: true,  desc: "OpenAI · Frontier · komplexe Workflows" },
   { id: "gemini-2.5-flash",          label: "Gemini 2.5 Flash",   badge: "Bald",       provider: "google",    available: false, desc: "Google · günstig · Volumen-Workloads" },
 ];
 
@@ -84,8 +84,8 @@ export const DEFAULT_AI_FRAMEWORK: AIFramework = {
   agentRole: "KI-Reaktivierungsagentin",
   tone: "Warm, direkt und menschlich — wie eine Freundin die im Bereich arbeitet",
   language: "de",
-  standardModel: "claude-sonnet-4-6",
-  premiumModel: "claude-opus-4-6",
+  standardModel: "gpt-4o-mini",
+  premiumModel: "gpt-4o",
   escalation: { afterTurns: 4, onIntents: ["objecting", "asking_price"] },
   systemPrompt: "",
   rules: ["max_2_sentences", "end_with_question", "no_price_in_opener", "use_first_name"],

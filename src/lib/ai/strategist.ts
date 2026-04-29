@@ -3,12 +3,10 @@
  * Decides the best next move based on the interpretation.
  */
 
-import Anthropic from '@anthropic-ai/sdk';
+import { llmChat } from '@/lib/ai/llm-client';
 import { buildStrategistPrompt, buildStrategistUserPrompt } from './prompts/strategist.prompt';
 import type { StrategistFrameworkOptions } from './prompts/strategist.prompt';
 import type { StrategyDecision, ConversationContext, MessageInterpretation, NextAction } from '@/lib/types/conversation';
-
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const FALLBACK_STRATEGY: StrategyDecision = {
   primaryGoal: 'Gesprächsfluss aufrechterhalten',
@@ -33,6 +31,7 @@ function buildMemoryContext(context: ConversationContext): string {
 export interface StrategistOptions {
   framework?: StrategistFrameworkOptions;
   temperature?: number;
+  model?: string;
 }
 
 export async function decideStrategy(
@@ -41,9 +40,8 @@ export async function decideStrategy(
   options?: StrategistOptions,
 ): Promise<StrategyDecision> {
   try {
-    const stream = client.messages.stream({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 500,
+    const raw = (await llmChat({
+      model: options?.model || 'gpt-4o-mini',
       system: buildStrategistPrompt(context.business, options?.framework),
       messages: [{
         role: 'user',
@@ -53,12 +51,15 @@ export async function decideStrategy(
           currentState: context.currentState,
           scores: context.scores,
           memoryContext: buildMemoryContext(context),
+          turnCount: context.history.length,
+          rejectionCount: context.memory.objectionsSeen.filter(o =>
+            /kein interesse|keine zeit|nicht interessiert|hard_rejection/i.test(o)
+          ).length,
         }),
       }],
-    });
-    const response = await stream.finalMessage();
-    const textBlock = response.content.find(b => b.type === 'text') as { text: string } | undefined;
-    const raw = (textBlock?.text ?? '').trim();
+      maxTokens: 500,
+      temperature: options?.temperature,
+    })).trim();
     let json = raw.replace(/^```json?\s*\n?/, '').replace(/\n?\s*```$/, '');
     const braceStart = json.indexOf('{');
     const braceEnd = json.lastIndexOf('}');

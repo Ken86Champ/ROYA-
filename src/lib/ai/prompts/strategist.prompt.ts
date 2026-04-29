@@ -55,7 +55,14 @@ Absolutverbote:
 - Kein Druck bei Timing-Einwänden
 - Kein Buchungslink schicken wenn die Person noch nicht warm ist
 - Nicht mehrere Themen in einem Move
-- Nicht auf jeden Einwand mit einem Argument antworten`;
+- Nicht auf jeden Einwand mit einem Argument antworten
+
+STOPP-REGELN — nextAction MUSS "stop" sein wenn:
+- Die Person 2× oder öfter klar "kein Interesse", "keine Zeit" oder "nicht interessiert" signalisiert hat
+- microIntent ist "hard_rejection" ODER riskFlags enthält "hard_rejection"
+- rejectionCount >= 2
+- turnCount >= 4 und friction >= 70 und temperature <= 25
+Dann: stop. Kein weiteres Argument, keine weitere Frage, kein Pitch. Gesprächsende respektieren.`;
   }
 
   // ── Rules awareness for strategy ──
@@ -79,9 +86,12 @@ export function buildStrategistUserPrompt(params: {
   currentState: string;
   scores: { temperature: number; friction: number; bookingReadiness: number; trust: number };
   memoryContext: string;
+  turnCount: number;
+  rejectionCount: number;
 }): string {
   return `LEAD: ${params.leadName}
 AKTUELLER ZUSTAND: ${params.currentState}
+GESPRÄCHSRUNDE: ${params.turnCount} | ABLEHNUNGEN ERKANNT: ${params.rejectionCount}
 SCORES: Temperatur=${params.scores.temperature}/100 | Reibung=${params.scores.friction}/100 | Buchungsbereitschaft=${params.scores.bookingReadiness}/100 | Vertrauen=${params.scores.trust}/100
 
 ANALYSE:

@@ -3,12 +3,10 @@
  * Reads the incoming message and understands what's REALLY being said.
  */
 
-import Anthropic from '@anthropic-ai/sdk';
+import { llmChat } from '@/lib/ai/llm-client';
 import { buildInterpreterPrompt, buildInterpreterUserPrompt } from './prompts/interpreter.prompt';
 import type { InterpreterFrameworkOptions } from './prompts/interpreter.prompt';
 import type { MessageInterpretation, ConversationContext, EmotionalTone, MicroIntent, ConversationState } from '@/lib/types/conversation';
-
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 function historyToText(context: ConversationContext, limit = 10): string {
   return context.history
@@ -31,6 +29,7 @@ const FALLBACK_INTERPRETATION: MessageInterpretation = {
 export interface InterpreterOptions {
   framework?: InterpreterFrameworkOptions;
   temperature?: number;
+  model?: string;
 }
 
 export async function interpretMessage(
@@ -39,9 +38,8 @@ export async function interpretMessage(
   options?: InterpreterOptions,
 ): Promise<MessageInterpretation> {
   try {
-    const stream = client.messages.stream({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 600,
+    const raw = (await llmChat({
+      model: options?.model || 'gpt-4o-mini',
       system: buildInterpreterPrompt(context.business, options?.framework),
       messages: [{
         role: 'user',
@@ -52,10 +50,9 @@ export async function interpretMessage(
           currentState: context.currentState,
         }),
       }],
-    });
-    const response = await stream.finalMessage();
-    const textBlock = response.content.find(b => b.type === 'text') as { text: string } | undefined;
-    const raw = (textBlock?.text ?? '').trim();
+      maxTokens: 600,
+      temperature: options?.temperature,
+    })).trim();
     let json = raw.replace(/^```json?\s*\n?/, '').replace(/\n?\s*```$/, '');
     const braceStart = json.indexOf('{');
     const braceEnd = json.lastIndexOf('}');
