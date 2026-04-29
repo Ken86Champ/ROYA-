@@ -494,6 +494,11 @@ async function main() {
       if (r.debugStrategyAction) {
         console.log(`     Strategist-Aktion: ${r.debugStrategyAction}`);
       }
+      if (r.reply && r.scenario.forbiddenInReply) {
+        const hit = r.scenario.forbiddenInReply.find(p => r.reply!.toLowerCase().includes(p.toLowerCase()));
+        if (hit) console.log(`     Verbotene Phrase gefunden: "${hit}"`);
+      }
+      if (r.reply) console.log(`     Reply: "${r.reply}"`);
     }
   }
 

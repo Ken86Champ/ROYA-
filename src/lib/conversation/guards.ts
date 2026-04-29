@@ -42,7 +42,6 @@ function isSimilar(a: string, b: string, threshold = 0.7): boolean {
 const REJECTION_PATTERNS = [
   /\bkein\s*interesse\b/i,
   /\bnicht\s*interessiert\b/i,
-  /\bkeine\s*zeit\b/i,
   /\bkein\s*bedarf\b/i,
   /\bdanke[\s,]*nein\b/i,
   /\bpasst\s*nicht\b/i,
@@ -73,7 +72,7 @@ const DIAGNOSE_PATTERNS = [
   /\bworan\s+hat\s+es\s+(gelegen|gescheitert)\b/i,
   /\bwas\s+hat\s+dich\s+(bisher\s+)?aufgehalten\b/i,
   /\bwas\s+hat\s+nicht\s+geklappt\b/i,
-  /\bwas\s+hat\s+sich\s+ver[aä]ndert\b/i,
+  /\bwas\s+hat\s+sich\b.{0,30}\bver[aä]ndert\b/i,
   /\bwar\s+(das|es)\s+bei\s+dir\s+eher\b/i,
   /\bwas\s+(hat|ist)\s+dein\s+(konkretes\s+)?ziel\b/i,
   /\bwelche[sr]?\s+ziel\b/i,

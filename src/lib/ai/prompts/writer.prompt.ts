@@ -134,6 +134,8 @@ SCHREIBREGELN — diese gelten absolut:
     "Ich hoffe",
     "Herzliche Grüsse",
     "Mit freundlichen Grüssen",
+    "Kein Problem",
+    "Alles gut",
   ];
   const forbidden = [...new Set([...ALWAYS_FORBIDDEN, ...(framework?.forbiddenPhrases ?? [])])];
   if (forbidden.length > 0) {

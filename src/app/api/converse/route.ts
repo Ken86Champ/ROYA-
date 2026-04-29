@@ -104,7 +104,7 @@ function buildMemoryFromHistory(history: { role: string; body: string }[]): Conv
   }
 
   // Detect rejections from lead messages
-  const REJECTION_PATTERN = /\b(nein|kein interesse|keine zeit|nicht interessiert|kein bedarf|danke nein|passt nicht|möchte nicht|will nicht|hör auf|bitte nicht mehr|abmelden|stop)\b/i;
+  const REJECTION_PATTERN = /\b(nein|kein interesse|nicht interessiert|kein bedarf|danke nein|passt nicht|möchte nicht|will nicht|hör auf|bitte nicht mehr|abmelden|stop)\b/i;
   const objectionsSeen = leadMsgs
     .filter(msg => REJECTION_PATTERN.test(msg))
     .slice(-5);
@@ -375,11 +375,12 @@ export async function POST(req: NextRequest) {
       (strategy as { nextAction: string }).nextAction = 'book_call';
     }
 
-    // Override: timing objection without prior rejection → defer
+    // Override: timing objection without hard rejection → defer
     const TIMING_OBJECTION_PATTERN = /\b(keine\s+Zeit|gerade\s+(schlecht|nicht\s+gut)|jetzt\s+gerade\s+nicht|sp[aä]ter\s+(besser|lieber)|bin\s+gerade\s+besch[aä]ftigt)\b/i;
-    if (strategy.nextAction === 'ask_question' && guards.rejectionCount === 0 &&
+    if (strategy.nextAction !== 'stop' && strategy.nextAction !== 'handoff' &&
+        strategy.nextAction !== 'book_call' &&
         TIMING_OBJECTION_PATTERN.test(message)) {
-      console.warn('[ROYA] Forcing defer — timing objection, no prior rejection');
+      console.warn('[ROYA] Forcing defer — timing objection');
       (strategy as { nextAction: string }).nextAction = 'defer';
     }
 
