@@ -30,6 +30,11 @@ const ALWAYS_FORBIDDEN = [
   "was meinst du",
   "Was meinst du",
   "Verstehe ich",
+  "Ich verstehe",
+  "Das verstehe ich",
+  "Sehr gut",
+  "Super",
+  "Toll",
 ];
 
 export interface WriteOptions {

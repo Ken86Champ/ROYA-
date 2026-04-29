@@ -458,7 +458,7 @@ Absolutverbote:
 - Fokus auf klare Signale: Interesse ja/nein
 - "Klingt interessant" = echtes Signal, nicht nur Höflichkeit (bei diesem Profil)
 - Schnelle Entscheidungen treffen über nächsten Move`,
-    rules: ["max_2_sentences", "end_with_question", "use_first_name"],
+    rules: ["max_2_sentences", "use_first_name"],
     forbiddenPhrases: [
       "Vielen Dank für Ihre Nachricht",
       "Gerne helfe ich",
@@ -552,7 +552,7 @@ Absolutverbote:
 - Bei "klingt gut" = Hot → sofort weiter
 - Bei Fragen = Warm → kurz beantworten und weiter
 - Bei Ablehnung = Cold → respektvoll verabschieden`,
-    rules: ["max_2_sentences", "end_with_question"],
+    rules: ["max_2_sentences"],
     forbiddenPhrases: [
       "Vielen Dank für Ihre Nachricht",
       "Gerne helfe ich",

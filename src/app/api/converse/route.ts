@@ -217,7 +217,7 @@ export async function POST(req: NextRequest) {
     const memory = buildMemoryFromHistory(history);
 
   // ── Stop/Handoff helpers ──────────────────────────────────────────────────
-  const GOODBYE_MESSAGE = 'Alles gut. Meld dich gern, wenn das Thema wieder aktuell wird.';
+  const GOODBYE_MESSAGE = 'Verstanden. Meld dich gern, wenn das Thema wieder aktuell wird.';
 
   function makeHandoffResponse(reason: string) {
     return NextResponse.json({
@@ -303,7 +303,9 @@ export async function POST(req: NextRequest) {
     // ── POST-INTERPRETER GUARDS: combine LLM signals with deterministic checks ──
     const guards = buildGuards(historyMessages, message, interpretation);
 
-    if (interpretation.isProblemSolved || guards.isProblemSolved) {
+    // Only trust deterministic guards for isProblemSolved — LLM interpretation is unreliable
+    // e.g. "Ich habe schon alles versucht" ≠ problem solved (= Pain Point!)
+    if (guards.isProblemSolved) {
       traceTurn({
         conversationId: 'simulator',
         turnNumber: leadTurns,

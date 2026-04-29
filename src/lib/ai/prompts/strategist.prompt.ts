@@ -67,7 +67,8 @@ STOPP-REGELN — ABSOLUT VERBINDLICH — nextAction MUSS "stop" sein wenn:
 - rejectionCount >= 2
 - turnCount >= 4 und friction >= 70 und temperature <= 25
 - Die Person sagt "Danke" als Gesprächsabschluss oder wiederholt ihre Ablehnung ("Wie gesagt...")
-- Die Person hat eine Alternative gefunden ("Ich mache schon...", "Problem gelöst")
+- guards.isProblemSolved = true (deterministischer Guard hat bestätigte Alternative erkannt)
+  (NICHT auf "Ich mache schon..." allein verlassen — kann auch Pain Point sein: "mache schon Sport aber komme nicht weiter")
 Dann: stop. Kein weiteres Argument, keine weitere Frage, kein Pitch. Gesprächsende respektieren.`;
 
   // ── Phase-Tracking: limits for each phase ──

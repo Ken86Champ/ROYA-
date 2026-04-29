@@ -39,7 +39,9 @@ ABLEHNUNGS-ERKENNUNG — KRITISCH:
 - "Das Problem hat sich gelöst. Danke." nach vorherigem Nein = hard_rejection
 - "Wie gesagt..." (Wiederholung) = hard_rejection, die Person wiederholt sich
 - "Danke" als Gesprächsabschluss ohne neue Aussage = hard_rejection
-- "Ich mache schon..." (Alternative Lösung gefunden) = soft_rejection oder hard_rejection
+- "Ich mache schon [konkreten Service, z.B. Crossfit/Gym/Training]..." (echte Alternative) = soft_rejection
+  ABER ACHTUNG: "Ich mache schon Sport/Training, aber ohne Fortschritt" = Pain Point, KEIN Rejection!
+  ABER ACHTUNG: "Ich habe schon alles versucht" = Frustration/Pain-Point, KEIN Rejection!
 NIEMALS soft_rejection oder hard_rejection als Interesse umdeuten.`;
   }
 
@@ -92,5 +94,6 @@ Def. responseQuality:
 - duplicate: selbe Botschaft wie vorherige Nachricht der Person
 
 Def. isExplicitRejection: true wenn die Nachricht eindeutig kein Interesse signalisiert (hard_rejection Muster)
-Def. isProblemSolved: true wenn die Person eine eigene Lösung gefunden hat ("mache schon", "problem gelöst", "habe schon")`;
+Def. isProblemSolved: true NUR wenn die Person AKTIV eine eigene konkrete Lösung hat: "Ich habe schon einen Trainer", "Ich mache schon Crossfit", "Bin bereits versorgt", "Habe schon jemanden".
+NICHT true für: "Ich habe schon alles versucht" (= Frustration/Pain-Point!), "Ich habe schon probiert" (= Misserfolg/Bedarf), "Habe schon versucht abzunehmen" (= Bedarf vorhanden).`;
 }

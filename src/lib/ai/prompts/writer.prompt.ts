@@ -147,6 +147,11 @@ SCHREIBREGELN — diese gelten absolut:
     "was meinst du",
     "Was meinst du",
     "Verstehe ich",
+    "Ich verstehe",
+    "Das verstehe ich",
+    "Sehr gut",
+    "Super",
+    "Toll",
   ];
   const forbidden = [...new Set([...ALWAYS_FORBIDDEN, ...(framework?.forbiddenPhrases ?? [])])];
   if (forbidden.length > 0) {
