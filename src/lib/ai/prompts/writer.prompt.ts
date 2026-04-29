@@ -124,13 +124,18 @@ SCHREIBREGELN — diese gelten absolut:
     }
   }
 
-  // ── Forbidden phrases ──
-  const forbidden = framework?.forbiddenPhrases ?? [
+  // ── Forbidden phrases — HARDCODED list always applies, framework can add more ──
+  const ALWAYS_FORBIDDEN = [
     "Vielen Dank für Ihre Nachricht",
     "Gerne helfe ich Ihnen dabei",
-    "Das freut mich zu hören!",
-    "Lass mich kurz erklären...",
+    "Das freut mich zu hören",
+    "Das klingt super",
+    "Lass mich kurz erklären",
+    "Ich hoffe",
+    "Herzliche Grüsse",
+    "Mit freundlichen Grüssen",
   ];
+  const forbidden = [...new Set([...ALWAYS_FORBIDDEN, ...(framework?.forbiddenPhrases ?? [])])];
   if (forbidden.length > 0) {
     prompt += `\n\nVERBOTEN — diese Phrasen NIEMALS verwenden:`;
     for (const phrase of forbidden) {

@@ -43,6 +43,17 @@ ABLEHNUNGS-ERKENNUNG — KRITISCH:
 NIEMALS soft_rejection oder hard_rejection als Interesse umdeuten.`;
   }
 
+  // ── HARDCODED rejection recognition — always active, cannot be overridden ──
+  prompt += `
+
+ABSOLUTE ABLEHNUNGS-ERKENNUNG — gilt immer:
+- Einsilbiges "Nein" ohne Kontext = hard_rejection, riskFlags: ["hard_rejection"]
+- "Kein Interesse" / "Nicht interessiert" = hard_rejection
+- Wiederholung einer früheren Ablehnung ("Wie gesagt...") = hard_rejection
+- "Danke" als Gesprächsabschluss nach Ablehnung = hard_rejection
+- "Problem gelöst" / "Mache schon Fitness" = stateRecommendation: dead
+NIEMALS eine Ablehnung als verstecktes Interesse umdeuten.`;
+
   prompt += `\n\nAntworte AUSSCHLIESSLICH mit validem JSON. Kein Text davor oder danach.`;
   return prompt;
 }

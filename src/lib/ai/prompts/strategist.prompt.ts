@@ -55,9 +55,13 @@ Absolutverbote:
 - Kein Druck bei Timing-Einwänden
 - Kein Buchungslink schicken wenn die Person noch nicht warm ist
 - Nicht mehrere Themen in einem Move
-- Nicht auf jeden Einwand mit einem Argument antworten
+- Nicht auf jeden Einwand mit einem Argument antworten`;
+  }
 
-STOPP-REGELN — nextAction MUSS "stop" sein wenn:
+  // ── HARDCODED stop rules — always active, cannot be overridden by any framework ──
+  prompt += `
+
+STOPP-REGELN — ABSOLUT VERBINDLICH — nextAction MUSS "stop" sein wenn:
 - Die Person 2× oder öfter klar "kein Interesse", "keine Zeit" oder "nicht interessiert" signalisiert hat
 - microIntent ist "hard_rejection" ODER riskFlags enthält "hard_rejection"
 - rejectionCount >= 2
@@ -65,7 +69,6 @@ STOPP-REGELN — nextAction MUSS "stop" sein wenn:
 - Die Person sagt "Danke" als Gesprächsabschluss oder wiederholt ihre Ablehnung ("Wie gesagt...")
 - Die Person hat eine Alternative gefunden ("Ich mache schon...", "Problem gelöst")
 Dann: stop. Kein weiteres Argument, keine weitere Frage, kein Pitch. Gesprächsende respektieren.`;
-  }
 
   // ── Rules awareness for strategy ──
   const activeRules = framework?.rules ?? [];
