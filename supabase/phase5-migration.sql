@@ -8,7 +8,7 @@ ALTER TABLE roya_agent_threads
 
 -- ── 2. Lead Profiles — persistent incremental memory per contact ─────────────
 CREATE TABLE IF NOT EXISTS lead_profiles (
-  contact_id      TEXT PRIMARY KEY REFERENCES roya_contacts(id) ON DELETE CASCADE,
+  contact_id      TEXT PRIMARY KEY,
   goal            TEXT,
   pain_point      TEXT,
   availability    TEXT,
@@ -55,8 +55,8 @@ ALTER TABLE lead_profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE conversation_traces ENABLE ROW LEVEL SECURITY;
 
 -- Service role bypass (needed for server-side writes)
-CREATE POLICY IF NOT EXISTS "service_role_all_lead_profiles"
-  ON lead_profiles FOR ALL TO service_role USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "service_role_all_lead_profiles" ON lead_profiles;
+CREATE POLICY "service_role_all_lead_profiles" ON lead_profiles FOR ALL TO service_role USING (true) WITH CHECK (true);
 
-CREATE POLICY IF NOT EXISTS "service_role_all_conv_traces"
-  ON conversation_traces FOR ALL TO service_role USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "service_role_all_conv_traces" ON conversation_traces;
+CREATE POLICY "service_role_all_conv_traces" ON conversation_traces FOR ALL TO service_role USING (true) WITH CHECK (true);
