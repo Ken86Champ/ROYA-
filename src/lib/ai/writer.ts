@@ -15,6 +15,18 @@ import type {
 } from '@/lib/types/conversation';
 import { historyToText } from './interpreter';
 
+// Must match the ALWAYS_FORBIDDEN list in writer.prompt.ts
+const ALWAYS_FORBIDDEN = [
+  "Vielen Dank für Ihre Nachricht",
+  "Gerne helfe ich Ihnen dabei",
+  "Das freut mich zu hören",
+  "Das klingt super",
+  "Lass mich kurz erklären",
+  "Ich hoffe",
+  "Herzliche Grüsse",
+  "Mit freundlichen Grüssen",
+];
+
 export interface WriteOptions {
   framework?: WriterFrameworkOptions;
   temperature?: number;

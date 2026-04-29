@@ -359,6 +359,30 @@ export async function POST(req: NextRequest) {
       (strategy as { nextAction: string }).nextAction = 'soft_pitch';
     }
 
+    // Override: lead explicitly requests a call/meeting → force book_call
+    const BOOKING_REQUEST_PATTERN = /\b(wann\s+(hast|hat|haben)\s+du\s+Zeit|wann\s+passt|termin|kurzen?\s+(anruf|call|gespr[aä]ch)|lass\s+uns\s+(mal\s+)?(reden|sprechen)|bin\s+(dabei|bereit|offen))\b/i;
+    if (strategy.nextAction !== 'stop' && strategy.nextAction !== 'handoff' &&
+        BOOKING_REQUEST_PATTERN.test(message)) {
+      console.warn('[ROYA] Forcing book_call — lead requested meeting/call');
+      (strategy as { nextAction: string }).nextAction = 'book_call';
+    }
+
+    // Override: warm closing signals → book_call
+    const WARM_CLOSE_PATTERN = /\b(lass\s+uns\s+mal\s+reden|ja\s+gut|klingt\s+gut|bin\s+interessiert|ja\s+lass|gerne\s+mal|zeig\s+mir)\b/i;
+    if ((strategy.nextAction === 'ask_question' || strategy.nextAction === 'soft_pitch') &&
+        guards.diagnoseQuestionCount >= 2 && WARM_CLOSE_PATTERN.test(message)) {
+      console.warn('[ROYA] Forcing book_call — warm close signal after qualifying');
+      (strategy as { nextAction: string }).nextAction = 'book_call';
+    }
+
+    // Override: timing objection without prior rejection → defer
+    const TIMING_OBJECTION_PATTERN = /\b(keine\s+Zeit|gerade\s+(schlecht|nicht\s+gut)|jetzt\s+gerade\s+nicht|sp[aä]ter\s+(besser|lieber)|bin\s+gerade\s+besch[aä]ftigt)\b/i;
+    if (strategy.nextAction === 'ask_question' && guards.rejectionCount === 0 &&
+        TIMING_OBJECTION_PATTERN.test(message)) {
+      console.warn('[ROYA] Forcing defer — timing objection, no prior rejection');
+      (strategy as { nextAction: string }).nextAction = 'defer';
+    }
+
     // ── Fetch real calendar slots if booking action ──────────────────────────
     if (strategy.nextAction === 'book_call') {
       const calResult = await fetchCalendarSlotsForWriter();
@@ -399,12 +423,13 @@ export async function POST(req: NextRequest) {
       });
     }
     if (!reply) {
-      console.warn('[ROYA] Writer returned empty without stop intent — handoff');
+      console.warn('[ROYA] Writer returned empty without stop intent — handoff. strategyAction:', strategy.nextAction, 'phase:', convPhase);
       return NextResponse.json({
         reply: '',
         nextAction: 'handoff',
         shouldHandoff: true,
         handoffReason: 'Writer leer — manuelle Prüfung erforderlich',
+        debugStrategyAction: strategy.nextAction,
         scores,
         state: currentState,
         frameworkVersion: evolved?.version ?? 0,

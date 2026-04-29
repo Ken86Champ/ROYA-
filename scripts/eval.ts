@@ -46,6 +46,7 @@ interface EvalResult {
   judgeReason?: string;
   durationMs: number;
   error?: string;
+  debugStrategyAction?: string;
 }
 
 // ── Scenarios ────────────────────────────────────────────────────────────────
@@ -258,9 +259,14 @@ async function runScenario(
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? 'http://localhost:3000';
 
   try {
+    const evalSecret = process.env.DASHBOARD_SECRET ?? '';
     const res = await fetch(`${baseUrl}/api/converse`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'referer': baseUrl,
+        ...(evalSecret ? { Authorization: `Bearer ${evalSecret}` } : {}),
+      },
       body: JSON.stringify({
         message: scenario.message,
         history: scenario.history,
@@ -276,6 +282,7 @@ async function runScenario(
       reply?: string;
       nextAction?: string;
       shouldHandoff?: boolean;
+      debugStrategyAction?: string;
     };
 
     const durationMs = Date.now() - startMs;
@@ -329,6 +336,7 @@ async function runScenario(
       actualNextAction: data.nextAction,
       reply: data.reply,
       durationMs,
+      debugStrategyAction: data.debugStrategyAction,
     };
   } catch (err) {
     return {
@@ -482,6 +490,9 @@ async function main() {
       console.log(`     Erwartet: ${r.scenario.expectedBehavior}, Erhalten: ${r.actualBehavior}`);
       if (r.scenario.expectedNextAction) {
         console.log(`     Aktion erwartet: ${r.scenario.expectedNextAction}, erhalten: ${r.actualNextAction ?? 'none'}`);
+      }
+      if (r.debugStrategyAction) {
+        console.log(`     Strategist-Aktion: ${r.debugStrategyAction}`);
       }
     }
   }

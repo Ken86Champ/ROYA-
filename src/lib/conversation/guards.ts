@@ -69,7 +69,7 @@ const PROBLEM_SOLVED_PATTERNS = [
 
 const DIAGNOSE_PATTERNS = [
   /\bwas\s+hat\s+(bisher\s+)?nicht\s+funktioniert\b/i,
-  /\bwas\s+ist\s+(dein|deine|das)\s+gr[oö][sß]te[rn]?\s+(challenge|herausforderung|problem|hindernis)\b/i,
+  /\bwas\s+ist\s+(dein|deine|das)\s+gr[oö](?:ss|ß)te[rns]?\s+(challenge|herausforderung|problem|hindernis)\b/i,
   /\bworan\s+hat\s+es\s+(gelegen|gescheitert)\b/i,
   /\bwas\s+hat\s+dich\s+(bisher\s+)?aufgehalten\b/i,
   /\bwas\s+hat\s+nicht\s+geklappt\b/i,
@@ -78,7 +78,7 @@ const DIAGNOSE_PATTERNS = [
   /\bwas\s+(hat|ist)\s+dein\s+(konkretes\s+)?ziel\b/i,
   /\bwelche[sr]?\s+ziel\b/i,
   /\bwas\s+m[oö]chtest\s+du\s+erreichen\b/i,
-  /\bwas\s+ist\s+der\s+(gr[oö][sß]te|wichtigste)\s+(grund|anlass)\b/i,
+  /\bwas\s+ist\s+der\s+(gr[oö](?:ss|ß)te[rns]?|wichtigste)\s+(grund|anlass)\b/i,
 ];
 
 // ── Exported guard functions ────────────────────────────────────────────────
