@@ -1,81 +1,93 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { SYSTEM_FRAMEWORKS } from "@/lib/framework-store";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+// ROYA Standard phase instructions — aligned with the framework blueprint
 const STEP_INSTRUCTIONS: Record<string, string> = {
-  opener: `Write a cold outreach opener. Rules:
-- Max 3 sentences. No "I hope this email finds you well" or similar filler.
-- First sentence: reference something specific about them (company, role, or last interaction).
-- Do NOT pitch. Create curiosity instead.
-- End with a single, low-commitment question.
-- Sound like a real person, not a salesperson.`,
+  opener: `Schreib eine kurze Reaktivierungs-SMS. Regeln:
+- Max 3 Sätze.
+- Satz 1: Vorstellen + erwähnen dass früher Kontakt war (konkret, z.B. wegen dem Angebot).
+- KEIN Pitch. Nur fragen ob das Thema noch aktuell ist.
+- Letzter Satz: Einfache Frage ("Ist das aktuell noch ein Thema bei dir?")
+- Klingt wie ein Mensch, nicht wie Werbung. Keine Emojis. Kein "Ich hoffe...".`,
 
-  followup: `Write a follow-up message. Rules:
-- Acknowledge they may be busy — don't guilt-trip.
-- Add ONE piece of new value (insight, data point, or relevant observation).
-- Different angle than the opener. Shorter.
-- Soft CTA, not pushy.`,
+  followup: `Schreib eine kurze Follow-up SMS (1. Nachfassung). Regeln:
+- 2-3 Sätze. Kein Vorwurf wegen Nicht-Antwort.
+- Neuer Winkel als beim Opener — z.B. Ergebnis/Nutzen erwähnen.
+- Sanfte Frage am Schluss, kein Druck.
+- Kein Sales-Jargon. Kein "Ich würde mich freuen..."`,
 
-  breakup: `Write a break-up message. Rules:
-- This is the last message. Say so explicitly but with dignity.
-- No desperation, no discounts.
-- Leave the door open with grace: "If anything changes, you know where I am."
-- Max 2-3 sentences. Respect their time.`,
+  breakup: `Schreib eine letzte SMS (Break-up). Regeln:
+- Max 2 Sätze. Sauber, würdevoll, kein Druck.
+- Mach klar dass dies die letzte Nachricht ist, aber die Tür bleibt offen.
+- Kein "Letzte Chance!", kein Discount, keine Verzweiflung.
+- Beispiel: "Ich melde mich nicht mehr. Falls sich das ändert, weißt du wo ich bin."`,
 
-  booking: `Write a booking confirmation message. Rules:
-- Warm and personal, not corporate.
-- Confirm the meeting clearly.
-- Add a micro-commitment: ask them one question they can prepare for.
-- Keep it under 4 sentences.`,
+  booking: `Schreib eine Buchungsbestätigung. Regeln:
+- Warm und persönlich. Termin klar bestätigen.
+- Füge eine kurze Frage hinzu damit sich die Person vorbereiten kann.
+- Max 3 Sätze. Kein Corporate-Ton.`,
 };
 
 export async function POST(req: NextRequest) {
   const {
-    stepType,       // "opener" | "followup" | "breakup" | "booking"
+    stepType,
     leadName,
-    leadCompany,
-    leadRole,
-    channel,        // "email" | "sms" | "whatsapp"
+    channel,
+    count = 2,
+    // Business context from campaign
     agentName,
     companyName,
-    product,
+    offer,
     valueProp,
-    ctaGoal,
-    bookingLink,
-    previousMessages, // string[]
-    count = 3,       // number of variations
+    painPoint,
+    noConvertReason,
+    language = "de",
   } = await req.json();
 
+  const royaStandard = SYSTEM_FRAMEWORKS[0];
+  const firstName = (leadName || "").split(" ")[0] || leadName;
+
   const channelInstruction = channel === "email"
-    ? "Format: Subject line on first line (Subject: ...), then blank line, then body. Max 150 words."
-    : "Format: Body only. Max 60 words. WhatsApp/SMS style — conversational, no formal structure.";
+    ? "Format: Betreffzeile in der ersten Zeile (Betreff: ...), dann Leerzeile, dann Text. Max 120 Wörter."
+    : "Format: Nur SMS-Text. Max 2-3 kurze Sätze. Kein formaler Aufbau. Wie eine echte SMS.";
 
   const context = [
-    `Lead: ${leadName}${leadCompany ? ` at ${leadCompany}` : ""}${leadRole ? `, ${leadRole}` : ""}`,
-    `Agent: ${agentName} from ${companyName}`,
-    `Product: ${product}`,
-    valueProp ? `Value Prop: ${valueProp}` : "",
-    ctaGoal   ? `Goal: ${ctaGoal}` : "",
-    bookingLink ? `Booking Link: ${bookingLink}` : "",
-    previousMessages?.length
-      ? `Previous messages:\n${previousMessages.slice(-3).join("\n---\n")}`
-      : "",
+    `Lead-Vorname: ${firstName}`,
+    agentName   ? `Agent: ${agentName}` : "",
+    companyName ? `Unternehmen: ${companyName}` : "",
+    offer       ? `Angebot / Produkt: ${offer}` : "",
+    valueProp   ? `Ergebnisse: ${valueProp}` : "",
+    painPoint   ? `Pain Point der Zielgruppe: ${painPoint}` : "",
+    noConvertReason ? `Warum Leads abgesprungen sind: ${noConvertReason}` : "",
   ].filter(Boolean).join("\n");
+
+  const forbiddenPhrases = (royaStandard.forbiddenPhrases ?? []).map(p => `- "${p}"`).join("\n");
 
   const prompt = `${STEP_INSTRUCTIONS[stepType] || STEP_INSTRUCTIONS.opener}
 
 ${channelInstruction}
 
-Context:
+Kontext:
 ${context}
 
-Write exactly ${count} variations. Separate each with "---VARIATION---".
-Each variation should have a meaningfully different angle/tone.`;
+VERBOTEN — diese Phrasen NIEMALS verwenden:
+${forbiddenPhrases}
+
+STIL-REGELN (aus dem ROYA Standard):
+- Kein "Ich freue mich", "Schönen Tag", "Danke für dein Vertrauen"
+- Keine Emojis, keine Gedankenstriche (—)
+- Du-Form. Kurz. Menschlich.
+- Sprache: ${language === "de" ? "Deutsch" : language}
+
+Schreib genau ${count} Variationen. Trenne jede mit "---VARIATION---".
+Jede Variation soll einen anderen Winkel/Ton haben.`;
 
   const response = await client.messages.create({
     model: "claude-sonnet-4-6",
-    max_tokens: 1024,
+    max_tokens: 800,
     messages: [{ role: "user", content: prompt }],
   });
 

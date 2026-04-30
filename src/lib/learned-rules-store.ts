@@ -193,6 +193,20 @@ export async function saveLearnedRules(data: LearnedRulesData): Promise<void> {
 }
 
 export async function addLearning(learning: StyleLearning): Promise<LearnedRulesData> {
+  // Check for existing learning with same source filename — prevent duplicates
+  try {
+    const { data: existing } = await supabase
+      .from('style_learnings')
+      .select('id')
+      .eq('source', learning.source)
+      .maybeSingle();
+    if (existing) {
+      // Replace the old entry with the new one (re-upload updates the learning)
+      await supabase.from('style_learnings').delete().eq('source', learning.source);
+      console.log(`[ROYA] Replaced existing learning for source: ${learning.source}`);
+    }
+  } catch { /* continue with insert */ }
+
   // Insert into DB
   try {
     const row = learningToRow(learning);
@@ -202,8 +216,11 @@ export async function addLearning(learning: StyleLearning): Promise<LearnedRules
 
   // Re-read full state
   const data = await loadLearnedRules();
-  // If DB insert failed, ensure the learning is still in the data
-  if (!data.learnings.find(l => l.id === learning.id)) {
+  // If DB insert failed, ensure the learning is in local data (replace by source if exists)
+  const existingLocalIdx = data.learnings.findIndex(l => l.source === learning.source);
+  if (existingLocalIdx >= 0) {
+    data.learnings[existingLocalIdx] = learning;
+  } else if (!data.learnings.find(l => l.id === learning.id)) {
     data.learnings.push(learning);
   }
   saveToFile(data);

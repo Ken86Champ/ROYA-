@@ -1022,6 +1022,27 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
               </div>
             </div>
 
+            {/* Agent Setup CTA */}
+            <div className="glass-card p-5 border-violet-200 bg-gradient-to-br from-violet-50 to-white">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm font-semibold text-violet-800">Vollständiges Agent Setup</p>
+                  <p className="text-xs text-slate-500 mt-1">62 gezielte Fragen zu Zielgruppe, Einwänden, Tonalität und Eskalation. Der Agent lernt dein Unternehmen vollständig kennen — und hält sich danach zuverlässig an alle Regeln.</p>
+                </div>
+                <a
+                  href={`/dashboard/setup?campaignId=${id}`}
+                  className="shrink-0 px-4 py-2 bg-violet-600 text-white text-xs font-medium rounded-xl hover:bg-violet-500 transition-colors whitespace-nowrap"
+                >
+                  Setup starten →
+                </a>
+              </div>
+              {form.aiFramework.frameworkId && (
+                <div className="mt-3 flex items-center gap-1.5 text-xs text-emerald-600 font-medium">
+                  <span>✓</span> Agent Setup verknüpft — Agent nutzt vollständige Konfiguration
+                </div>
+              )}
+            </div>
+
             <div className="flex gap-3">
               <button onClick={() => setStep(4)} className="flex-1 btn-secondary py-2.5 text-sm">← Zurück</button>
               <button onClick={() => goToStep(6)} className="flex-1 btn-primary py-2.5 text-sm">Weiter → Framework</button>

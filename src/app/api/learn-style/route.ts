@@ -177,12 +177,14 @@ export async function POST(req: NextRequest) {
 
     // Evolve the unified framework with all learnings
     let frameworkVersion = 0;
+    let evolutionWarning: string | undefined;
     try {
       const evolved = await evolveFramework();
       frameworkVersion = evolved.version;
       console.log(`[ROYA] Framework evolved to v${evolved.version} after learning from ${fileName}`);
     } catch (evoErr) {
       console.error('[ROYA] Framework evolution failed (learnings still saved):', evoErr);
+      evolutionWarning = 'Learnings gespeichert, aber Framework-Evolution fehlgeschlagen. Bitte nochmal versuchen oder anderen Upload testen.';
     }
 
     return NextResponse.json({
@@ -190,7 +192,10 @@ export async function POST(req: NextRequest) {
       learning,
       totalLearnings: data.learnings.length,
       frameworkVersion,
-      message: `${learning.rules.length} Regeln, ${learning.phrasesToUse.length} Formulierungen und ${learning.exampleMessages.length} Beispiele gelernt. Framework v${frameworkVersion} erstellt.`,
+      evolutionWarning,
+      message: evolutionWarning
+        ? `Gespeichert, aber Evolution fehlgeschlagen: ${evolutionWarning}`
+        : `${learning.rules.length} Regeln, ${learning.phrasesToUse.length} Formulierungen und ${learning.exampleMessages.length} Beispiele gelernt. Framework v${frameworkVersion} aktiv.`,
     });
   } catch (err) {
     console.error('[ROYA] Style learning failed:', err);

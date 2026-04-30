@@ -227,8 +227,6 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
   const [launching, setLaunching] = useState(false);
   const [search, setSearch] = useState("");
   const [simDone, setSimDone] = useState(false);
-  const [quickOffer, setQuickOffer] = useState("");
-  const [savingOffer, setSavingOffer] = useState(false);
 
   // Manual test lead (when campaign has no contacts)
   const [manualName, setManualName] = useState("Thomas Meier");
@@ -271,11 +269,14 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
           setReferenceDoc(c.aiFramework.referenceDoc);
           setReferenceFileName("Gespeicherte Vorlage");
         }
-        // Load the campaign's prompt framework if linked
+        // Only load campaign-linked frameworks — the server's evolved framework (with all learnings) handles the rest.
+        // Sending the ROYA Standard from the client would bypass the evolved framework.
         if (c.aiFramework?.frameworkId) {
           fetch(`/api/frameworks/${c.aiFramework.frameworkId}`)
             .then(r => r.ok ? r.json() : null)
-            .then(fw => { if (fw) setActiveFramework(fw); })
+            .then(data => {
+              if (data && data.writerInstructions) setActiveFramework(data);
+            })
             .catch(() => {});
         }
       })
@@ -399,7 +400,6 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
                 ...bc,
                 rules: fw?.rules ?? [],
                 systemPrompt: fw?.systemPrompt || "",
-                standardModel: fw?.standardModel || "gpt-4o-mini",
               },
               ...(activeFramework ? {
                 framework: {
@@ -416,6 +416,8 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
             }),
           });
           const aiData = await aiRes.json();
+          // action='stop' means conversation is over — no reply
+          if (aiData.action === 'stop') { syncTyping(false); return; }
           const reply = aiData.reply || "";
           const isError = aiData.error === 'API_CREDIT_ERROR' || reply.includes('⚠');
 
@@ -448,27 +450,6 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveMode, liveTestNumber]);
-
-  const saveQuickOffer = async () => {
-    if (!campaign || !quickOffer.trim()) return;
-    setSavingOffer(true);
-    try {
-      const res = await fetch(`/api/campaigns/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "update_all",
-          businessContext: { ...campaign.businessContext, offer: quickOffer.trim() },
-        }),
-      });
-      if (res.ok) {
-        const updated = await res.json();
-        setCampaign(updated);
-        setQuickOffer("");
-      }
-    } catch {}
-    setSavingOffer(false);
-  };
 
   const selectContact = async (contact: CampaignContact) => {
     if (!campaign) return;
@@ -541,10 +522,10 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
           agentName: fw.agentName || "Lena",
           companyName: bc.companyName || "",
           offer: bc.offer || "",
-          allServices: bc.allServices || "",
+          goal: bc.cta || "Reaktivierungsgespräch starten",
           valueProp: bc.valueProp || "",
-          cta: bc.cta || "",
           painPoint: bc.painPoint || "",
+          cta: bc.cta || "",
           specialOffer: bc.specialOffer || "",
           leadRelationship: bc.leadRelationship || "",
           urgency: bc.urgency || "",
@@ -617,7 +598,6 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
             exampleConversation: campaign.businessContext?.exampleConversation || "",
             rules: campaign.aiFramework?.rules ?? [],
             systemPrompt: campaign.aiFramework?.systemPrompt || "",
-            standardModel: campaign.aiFramework?.standardModel || "gpt-4o-mini",
           },
           // Send full framework data if available
           ...(activeFramework ? {
@@ -637,8 +617,8 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
       });
       const data = await res.json();
       syncTyping(false);
-      // If the conversation ended (STOP/HANDOFF) and there's no reply, don't show a fallback bubble
-      if ((data.type === 'STOP' || data.type === 'HANDOFF') && !data.reply) {
+      // action='stop' means conversation is over — no reply, don't add empty message
+      if (data.action === 'stop' || (!data.reply && !data.error)) {
         return;
       }
       const reply = data.reply || data.error || "⚠ Keine Antwort erhalten.";
@@ -742,8 +722,6 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
   );
 
   const channel = campaign.channels?.[0] ?? "sms";
-  const bc = campaign.businessContext ?? {};
-  const hasOffer = !!(bc.offer?.trim() || bc.allServices?.trim() || bc.valueProp?.trim());
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -760,28 +738,6 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
             {campaign.contacts?.length ?? 0} Leads · {(campaign.channels ?? []).map(c => c.toUpperCase()).join(", ")}
           </p>
         </div>
-
-        {/* ── Offer missing warning ── */}
-        {!hasOffer && (
-          <div className="mx-3 mt-3 p-3 rounded-xl bg-amber-50 border border-amber-200">
-            <p className="text-[11px] font-semibold text-amber-700 mb-1">⚠ Kein Angebot definiert</p>
-            <p className="text-[10px] text-amber-600 mb-2">Die Opener-Nachricht kann kein Produkt erwähnen. Füge das Angebot kurz hinzu:</p>
-            <input
-              value={quickOffer}
-              onChange={e => setQuickOffer(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && saveQuickOffer()}
-              placeholder="z.B. 1:1 Personal Training Programm"
-              className="w-full bg-white border border-amber-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-amber-400 placeholder-amber-300"
-            />
-            <button
-              disabled={!quickOffer.trim() || savingOffer}
-              onClick={saveQuickOffer}
-              className="mt-1.5 w-full py-1.5 bg-amber-500 text-white text-xs font-semibold rounded-lg hover:bg-amber-400 disabled:opacity-40 transition-all"
-            >
-              {savingOffer ? "Speichern…" : "Speichern"}
-            </button>
-          </div>
-        )}
 
         {/* Search */}
         <div className="px-3 py-2 border-b border-slate-100">
@@ -1004,7 +960,12 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
                   setReferenceDoc(text.slice(0, 15000));
                   setReferenceFileName(file.name);
                   if (data.frameworkVersion) setFrameworkVersion(data.frameworkVersion);
+                  // Clear any cached framework so the server's newly evolved framework is used
+                  setActiveFramework(null);
                   done++;
+                  if (data.evolutionWarning) {
+                    lastError = `⚠ ${file.name}: ${data.evolutionWarning}`;
+                  }
                 } else {
                   lastError = `⚠ ${file.name}: ${data.error || 'Fehler'}`;
                 }

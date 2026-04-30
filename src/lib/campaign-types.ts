@@ -33,7 +33,7 @@ export const RULE_TEXT: Record<string, string> = {
   max_2_sentences:    "Antworte mit maximal 2 kurzen Sätzen.",
   end_with_question:  "Beende jede Antwort mit einer Frage.",
   no_price_in_opener: "Erwähne niemals Preise im ersten Kontakt.",
-  use_first_name:     "Sprich den Lead mit Vornamen an.",
+  use_first_name:     "Sprich den Lead MAXIMAL EINMAL mit Vornamen an — nur wenn es natürlich wirkt. Wiederhole den Namen NICHT in jeder Nachricht.",
   no_emoji:           "Verwende keine Emojis.",
   no_dashes:          "Keine Bindestriche/Gedankenstriche in Nachrichten.",
   swiss_german_ok:    "Schweizerdeutsche Ausdrücke sind erlaubt.",
@@ -89,6 +89,7 @@ export const DEFAULT_AI_FRAMEWORK: AIFramework = {
   escalation: { afterTurns: 4, onIntents: ["objecting", "asking_price"] },
   systemPrompt: "",
   rules: ["max_2_sentences", "end_with_question", "no_price_in_opener", "use_first_name"],
+  frameworkId: "roya-standard",   // Always link to ROYA Standard — ensures core formula applies from day 1
 };
 
 export interface FlowBranch {

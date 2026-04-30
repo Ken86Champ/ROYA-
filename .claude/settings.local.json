@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(git add *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(npx tsc *)",
+      "Bash(curl -s http://localhost:3005/api/learn-style)",
+      "Bash(node -e \"const j=JSON.parse\\(require\\('fs'\\).readFileSync\\(process.env.TEMP+'/learnings.json','utf8'\\)\\); console.log\\('Total learnings:', j.learnings?.length\\); \\(j.learnings||[]\\).forEach\\(\\(l,i\\) => console.log\\(i+1, l.source, '| rules:', l.rules?.length, '| examples:', l.exampleMessages?.length, '| playbook:', l.playbook?.length, '| tone:', l.toneProfile?.slice\\(0,60\\)\\)\\);\")"
     ]
   }
 }

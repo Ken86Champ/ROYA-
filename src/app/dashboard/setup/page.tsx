@@ -236,7 +236,11 @@ function SetupPageInner() {
       }
       setSaved(true);
       try { localStorage.removeItem('roya_setup_session'); } catch { /* ignore */ }
-      setTimeout(() => router.push("/dashboard/campaigns/new"), 1200);
+      // If started from a campaign, go back to that campaign's edit — otherwise create new
+      const target = campaignId
+        ? `/dashboard/campaigns/${campaignId}/edit`
+        : "/dashboard/campaigns/new";
+      setTimeout(() => router.push(target), 1200);
     } catch (err) {
       console.error("Save failed:", err);
       setSaveError(String(err));

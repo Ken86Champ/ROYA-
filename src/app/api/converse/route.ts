@@ -11,21 +11,9 @@ import { writeAndCheck } from '@/lib/ai/writer';
 import { DEFAULT_PERSONA } from '@/lib/types/conversation';
 import { SYSTEM_FRAMEWORKS } from '@/lib/framework-store';
 import { loadEvolvedFramework } from '@/lib/framework-evolution';
+import { runAutoLearning } from '@/lib/auto-learning';
 import { supabase } from '@/lib/supabase';
 import { fetchCalendarSlotsForWriter } from '@/lib/calendar-slots';
-import {
-  buildGuards,
-  detectProblemSolved,
-  countExplicitRejections,
-  detectRepeatedLeadMessages,
-  detectRepeatedAgentQuestions,
-} from '@/lib/conversation/guards';
-import {
-  derivePhaseFromGuards,
-  transitionPhase,
-  phaseToSystemHint,
-} from '@/lib/conversation/state-machine';
-import { traceTurn } from '@/lib/conversation/tracer';
 import type {
   ConversationContext,
   HistoryMessage,
@@ -33,7 +21,6 @@ import type {
   BusinessPersona,
   ConversationMemory,
   ConversationState,
-  ConversationGuards,
 } from '@/lib/types/conversation';
 
 const DEFAULT_SCORES: ConversationScores = {
@@ -103,18 +90,12 @@ function buildMemoryFromHistory(history: { role: string; body: string }[]): Conv
     if (msg.length > 5) keyFacts.push(`Lead sagte: "${msg}"`);
   }
 
-  // Detect rejections from lead messages
-  const REJECTION_PATTERN = /\b(nein|kein interesse|nicht interessiert|kein bedarf|danke nein|passt nicht|möchte nicht|will nicht|hör auf|bitte nicht mehr|abmelden|stop)\b/i;
-  const objectionsSeen = leadMsgs
-    .filter(msg => REJECTION_PATTERN.test(msg))
-    .slice(-5);
-
   return {
     summary: leadMsgs.length > 0
       ? `${leadMsgs.length} Lead-Nachrichten bisher. Letzte: "${leadMsgs[leadMsgs.length - 1]}"`
       : '',
     keyFacts: keyFacts.slice(-5),
-    objectionsSeen,
+    objectionsSeen: [],
     interests,
     constraints: [],
     lastSuccessfulAngle: agentMsgs.length > 0 ? agentMsgs[agentMsgs.length - 1] : '',
@@ -159,34 +140,55 @@ export async function POST(req: NextRequest) {
     // ── Build framework options from dedicated framework field, evolved framework, or ROYA Standard fallback ──
     const royaStandard = SYSTEM_FRAMEWORKS[0]; // ROYA Standard is always last resort
     const evolved = await loadEvolvedFramework();
-    const fw = framework && framework.writerInstructions
-      ? framework
-      : evolved
-        ? {
-            writerInstructions: evolved.writerInstructions,
-            strategistInstructions: evolved.strategistInstructions,
-            interpreterInstructions: evolved.interpreterInstructions,
-            rules: evolved.rules,
-            forbiddenPhrases: evolved.forbiddenPhrases,
-            temperature: evolved.temperature,
-            exampleMessages: evolved.exampleMessages,
-          }
-        : {
-            writerInstructions: royaStandard.writerInstructions,
-            strategistInstructions: royaStandard.strategistInstructions,
-            interpreterInstructions: royaStandard.interpreterInstructions,
-            rules: royaStandard.rules,
-            forbiddenPhrases: royaStandard.forbiddenPhrases,
-            temperature: royaStandard.temperature,
-            exampleMessages: royaStandard.exampleMessages,
-          };
+
+    // Bug 3 Fix: Validate evolved framework before using it — must have all 3 core prompts
+    const evolvedIsValid = evolved &&
+      evolved.writerInstructions && evolved.writerInstructions.length > 100 &&
+      evolved.strategistInstructions && evolved.strategistInstructions.length > 100 &&
+      evolved.interpreterInstructions && evolved.interpreterInstructions.length > 50;
+    if (evolved && !evolvedIsValid) {
+      console.warn('[ROYA] Evolved framework invalid/incomplete — falling back to ROYA Standard');
+    }
+
+    // Evolved framework with learnings ALWAYS wins — it contains the user's trained conversation style.
+    // Client-passed framework only applies when no trained evolved framework exists yet.
+    const evolvedHasLearnings = evolvedIsValid && (evolved?.learningsUsed ?? 0) > 0;
+    const fw = evolvedHasLearnings
+      ? {
+          writerInstructions: evolved!.writerInstructions,
+          strategistInstructions: evolved!.strategistInstructions,
+          interpreterInstructions: evolved!.interpreterInstructions,
+          rules: evolved!.rules,
+          forbiddenPhrases: evolved!.forbiddenPhrases,
+          temperature: evolved!.temperature,
+          exampleMessages: evolved!.exampleMessages,
+        }
+      : framework && framework.writerInstructions
+        ? framework
+        : evolvedIsValid
+          ? {
+              writerInstructions: evolved!.writerInstructions,
+              strategistInstructions: evolved!.strategistInstructions,
+              interpreterInstructions: evolved!.interpreterInstructions,
+              rules: evolved!.rules,
+              forbiddenPhrases: evolved!.forbiddenPhrases,
+              temperature: evolved!.temperature,
+              exampleMessages: evolved!.exampleMessages,
+            }
+          : {
+              writerInstructions: royaStandard.writerInstructions,
+              strategistInstructions: royaStandard.strategistInstructions,
+              interpreterInstructions: royaStandard.interpreterInstructions,
+              rules: royaStandard.rules,
+              forbiddenPhrases: royaStandard.forbiddenPhrases,
+              temperature: royaStandard.temperature,
+              exampleMessages: royaStandard.exampleMessages,
+            };
     const bizAny = business as unknown as Record<string, unknown> | undefined;
     const rules = fw.rules ?? (bizAny?.rules as string[] | undefined) ?? [];
     const forbiddenPhrases = fw.forbiddenPhrases ?? [];
     const temperature = fw.temperature ?? 0.5;
     const customSystemPrompt = (bizAny?.systemPrompt as string | undefined) ?? '';
-    // Model selection — passed from campaign's aiFramework.standardModel, default gpt-4o-mini
-    const pipelineModel = (bizAny?.standardModel as string | undefined) || 'gpt-4o-mini';
 
     const writerFramework = {
       writerInstructions: fw.writerInstructions,
@@ -216,73 +218,45 @@ export async function POST(req: NextRequest) {
     const currentState = deriveState(scores, leadTurns);
     const memory = buildMemoryFromHistory(history);
 
-  // ── Stop/Handoff helpers ──────────────────────────────────────────────────
-  const GOODBYE_MESSAGE = 'Verstanden. Meld dich gern, wenn das Thema wieder aktuell wird.';
+    // ── DETERMINISTIC GOODBYE GUARD — runs before any LLM ──────────────────
+    // If the agent's last message was a goodbye/close and the lead confirms
+    // with a short acknowledgment → conversation is OVER. No reply.
+    const AGENT_GOODBYE_PATTERNS = /melde dich|wenn sich das ändert|wenn sich etwas ändert|viel erfolg|alles gute|bis dann|tschüss|ciao|auf wiedersehen|take care|bis bald|gerne wieder|falls du doch|falls sich das|falls was ist/i;
+    const LEAD_ACK_PATTERNS = /^(ok|okay|alles klar|danke|thx|thanks|gut|super|verstanden|👍|👌|passt|kk|klar|oki|k\.)\.?$/i;
 
-  function makeHandoffResponse(reason: string) {
-    return NextResponse.json({
-      reply: '',
-      nextAction: 'handoff',
-      shouldHandoff: true,
-      handoffReason: reason,
-      scores,
-      state: currentState,
-      frameworkVersion: 0,
-    });
-  }
+    const lastAgentMsg = [...history].reverse().find(m => m.role === 'agent');
+    const lastLeadMsg = message.trim();
 
-  function makeStopResponse() {
-    return NextResponse.json({
-      reply: GOODBYE_MESSAGE,
-      nextAction: 'stop',
-      shouldHandoff: false,
-      scores,
-      state: 'dead',
-      frameworkVersion: 0,
-    });
-  }
+    if (
+      lastAgentMsg &&
+      AGENT_GOODBYE_PATTERNS.test(lastAgentMsg.body) &&
+      LEAD_ACK_PATTERNS.test(lastLeadMsg)
+    ) {
+      // Conversation is closed — return empty stop, no reply
+      return NextResponse.json({ reply: '', action: 'stop' }, { status: 200 });
+    }
 
-  // Build historyMessages early for guards
-  const historyMessages: HistoryMessage[] = history.map(m => ({
-    role: m.role,
-    content: m.body,
-    timestamp: new Date().toISOString(),
-  }));
+    // ── HARD REJECTION GUARD — lead already rejected, agent said goodbye ──
+    // If agent sent a goodbye AND lead says anything short/neutral → still stop
+    const HARD_REJECTION_PATTERNS = /kein interesse|nicht aktuell|kein bedarf|bin bedient|lass mich in ruhe|hör auf|stop|unsubscribe|irisch und selbstständig|selbstständig.*danke|bin versorgt/i;
+    const agentMsgs = history.filter(m => m.role === 'agent');
+    const leadMsgs = history.filter(m => m.role === 'lead');
 
-  // ── PRE-CHECKS: Deterministic guards before any LLM call ──────────────────
+    // Check if lead previously rejected AND agent already responded to that rejection
+    const leadHardRejected = leadMsgs.some(m => HARD_REJECTION_PATTERNS.test(m.body));
+    const agentAlreadySaidGoodbye = agentMsgs.some(m => AGENT_GOODBYE_PATTERNS.test(m.body));
+    if (leadHardRejected && agentAlreadySaidGoodbye) {
+      return NextResponse.json({ reply: '', action: 'stop' }, { status: 200 });
+    }
 
-  // Hard Stop 1: More than 15 lead turns — structural loop
-  if (leadTurns >= 15) {
-    return makeHandoffResponse('Conversation überschreitet 15 Lead-Turns — Handoff erforderlich');
-  }
+    // Build minimal context for simulator (no DB needed)
+    const historyMessages: HistoryMessage[] = history.map(m => ({
+      role: m.role,
+      content: m.body,
+      timestamp: new Date().toISOString(),
+    }));
 
-  // Hard Stop 2: Lead repeating same message 3+ times
-  const duplicateLeadCount = detectRepeatedLeadMessages(historyMessages);
-  if (duplicateLeadCount >= 3) {
-    return makeHandoffResponse(`Lead wiederholt dieselbe Nachricht ${duplicateLeadCount}x — Loop erkannt`);
-  }
-
-  // Hard Stop 3: Agent repeating same question 3+ times
-  const duplicateAgentCount = detectRepeatedAgentQuestions(historyMessages);
-  if (duplicateAgentCount >= 3) {
-    return makeHandoffResponse(`Agent hat dieselbe Frage ${duplicateAgentCount}x gestellt — Loop erkannt`);
-  }
-
-  // Hard Stop 4: "Problem solved" signal in current message
-  if (detectProblemSolved(message)) {
-    return makeStopResponse();
-  }
-
-  // Hard Stop 5: 2+ explicit rejections (regex-based, no LLM needed)
-  const preRejectionCount = countExplicitRejections([
-    ...historyMessages,
-    { role: 'lead', content: message, timestamp: new Date().toISOString() },
-  ]);
-  if (preRejectionCount >= 2) {
-    return makeStopResponse();
-  }
-
-  const context = {
+    const context: ConversationContext = {
       conversationId: 'simulator',
       leadName,
       channel: 'sms',
@@ -297,115 +271,32 @@ export async function POST(req: NextRequest) {
     const interpretation = await interpretMessage(context, message, {
       framework: interpreterFramework,
       temperature: 0.3,
-      model: pipelineModel,
     });
-
-    // ── POST-INTERPRETER GUARDS: combine LLM signals with deterministic checks ──
-    const guards = buildGuards(historyMessages, message, interpretation);
-
-    // Only trust deterministic guards for isProblemSolved — LLM interpretation is unreliable
-    // e.g. "Ich habe schon alles versucht" ≠ problem solved (= Pain Point!)
-    if (guards.isProblemSolved) {
-      traceTurn({
-        conversationId: 'simulator',
-        turnNumber: leadTurns,
-        phase: 'CLOSED_RESOLVED',
-        leadMessage: message,
-        guardsTriggered: ['isProblemSolved'],
-        rejectionCount: guards.rejectionCount,
-        diagnoseQCount: guards.diagnoseQuestionCount,
-        durationMs: 0,
-        model: 'guards',
-      });
-      return makeStopResponse();
-    }
-    if (guards.rejectionCount >= 2 || interpretation.isExplicitRejection) {
-      traceTurn({
-        conversationId: 'simulator',
-        turnNumber: leadTurns,
-        phase: 'CLOSED_REJECTED',
-        leadMessage: message,
-        guardsTriggered: ['rejectionCount >= 2'],
-        rejectionCount: guards.rejectionCount,
-        diagnoseQCount: guards.diagnoseQuestionCount,
-        durationMs: 0,
-        model: 'guards',
-      });
-      return makeStopResponse();
-    }
-
-    // ── Derive phase from guards and inject into strategist framework ──────────
-    const convPhase = derivePhaseFromGuards({
-      turnCount: guards.turnCount,
-      rejectionCount: guards.rejectionCount,
-      diagnoseQuestionCount: guards.diagnoseQuestionCount,
-      isProblemSolved: guards.isProblemSolved,
-    });
-    const phaseHint = phaseToSystemHint(convPhase);
-    // Prepend phase hint to strategist instructions so it sees current phase context
-    strategistFramework.strategistInstructions = phaseHint
-      + (strategistFramework.strategistInstructions ? '\n\n' + strategistFramework.strategistInstructions : '');
-
-    const pipelineStartMs = Date.now();
-
     const strategy = await decideStrategy(context, interpretation, {
       framework: strategistFramework,
       temperature: 0.3,
-      model: pipelineModel,
-      guards,
     });
 
-    // Override: if agent is looping on diagnose questions, force pitch regardless of strategist action
-    if (guards.diagnoseQuestionCount >= 3 &&
-        strategy.nextAction !== 'book_call' &&
-        strategy.nextAction !== 'stop' &&
-        strategy.nextAction !== 'handoff' &&
-        strategy.nextAction !== 'soft_pitch' &&
-        strategy.nextAction !== 'defer') {
-      console.warn('[ROYA] Forcing soft_pitch — agent asked 3+ diagnose questions already');
-      (strategy as { nextAction: string }).nextAction = 'soft_pitch';
+    // ── Bug 2 Fix: Deterministischer Preis-Guard für Opener-Phase ─────────────
+    // Turn 0 oder 1: Lead fragt nach Preis → NIEMALS nennen, erst Situation verstehen
+    const isPriceQuestion = interpretation.microIntent === 'asking_price' ||
+      /was kostet|wie viel|preis|kosten|gebühr|tarif|was zahlt|how much|price/i.test(message);
+    if (isPriceQuestion && leadTurns <= 1) {
+      strategy.nextAction = 'ask_question';
+      strategy.primaryGoal = 'Erst Situation und Ziel verstehen, bevor Preis besprochen wird';
+      strategy.angle = 'Konkretes Ziel oder aktuelles Problem des Leads erfragen';
+      strategy.desiredTone = 'neugierig-warm';
+      strategy.thingsToAvoid = ['Preis nennen', 'Konditionen erwähnen', 'Pakete beschreiben', 'Kosten erwähnen', 'Preisspanne nennen'];
+      // Inject a mandatory instruction directly into writer prompt
+      writerFramework.writerInstructions = (writerFramework.writerInstructions || royaStandard.writerInstructions) +
+        '\n\n── PFLICHT-REGEL — PREIS IM OPENER ──\n' +
+        'Die Person fragt nach dem Preis, aber du kennst ihre Situation noch nicht.\n' +
+        'Antworte EXAKT so (oder sinngemäß): "Erstmal gar nichts. Wir schauen uns in Ruhe an, ob und wie wir dir helfen können. Alles Weitere klären wir dann persönlich. Was ist dein konkretes Ziel?"\n' +
+        'Nenne KEINEN Preis, KEINE Preisspanne, KEINE Pakete. Leite die Frage SOFORT auf das Ziel des Leads um.';
     }
 
-    // Override: lead explicitly requests a call/meeting → force book_call
-    const BOOKING_REQUEST_PATTERN = /\b(wann\s+(hast|hat|haben)\s+du\s+Zeit|wann\s+passt|termin|kurzen?\s+(anruf|call|gespr[aä]ch)|lass\s+uns\s+(mal\s+)?(reden|sprechen)|bin\s+(dabei|bereit|offen))\b/i;
-    if (strategy.nextAction !== 'stop' && strategy.nextAction !== 'handoff' &&
-        BOOKING_REQUEST_PATTERN.test(message)) {
-      console.warn('[ROYA] Forcing book_call — lead requested meeting/call');
-      (strategy as { nextAction: string }).nextAction = 'book_call';
-    }
-
-    // Override: warm closing signals → book_call
-    const WARM_CLOSE_PATTERN = /\b(lass\s+uns\s+mal\s+reden|ja\s+gut|klingt\s+gut|bin\s+interessiert|ja\s+lass|gerne\s+mal|zeig\s+mir)\b/i;
-    if ((strategy.nextAction === 'ask_question' || strategy.nextAction === 'soft_pitch') &&
-        guards.diagnoseQuestionCount >= 2 && WARM_CLOSE_PATTERN.test(message)) {
-      console.warn('[ROYA] Forcing book_call — warm close signal after qualifying');
-      (strategy as { nextAction: string }).nextAction = 'book_call';
-    }
-
-    // Override: timing objection without hard rejection → defer
-    const TIMING_OBJECTION_PATTERN = /\b(keine\s+Zeit|gerade\s+(schlecht|nicht\s+gut)|jetzt\s+gerade\s+nicht|sp[aä]ter\s+(besser|lieber)|bin\s+gerade\s+besch[aä]ftigt)\b/i;
-    if (strategy.nextAction !== 'stop' && strategy.nextAction !== 'handoff' &&
-        strategy.nextAction !== 'book_call' &&
-        TIMING_OBJECTION_PATTERN.test(message)) {
-      console.warn('[ROYA] Forcing defer — timing objection');
-      (strategy as { nextAction: string }).nextAction = 'defer';
-    }
-
-    // Override: lead selects a day/time from slots the agent just presented → force book_call + confirm
-    const BOOKING_SELECTION_PATTERN = /\b(montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag|\d{1,2}:\d{2}|passt\s+(mir\s+)?gut|nehme\s+(den|die)|das\s+passt|super\s+(termin|passt)|okay\s+gut)\b/i;
-    const lastAgentBody = history.filter(m => m.role === 'agent').slice(-1)[0]?.body || '';
-    const lastAgentHadTimeSlots = /\b\d{1,2}:\d{2}\b/.test(lastAgentBody);
-    if (lastAgentHadTimeSlots && BOOKING_SELECTION_PATTERN.test(message) &&
-        strategy.nextAction !== 'stop' && strategy.nextAction !== 'handoff') {
-      console.warn('[ROYA] Forcing book_call — lead selected a time slot from presented options');
-      (strategy as { nextAction: string }).nextAction = 'book_call';
-      // Pass the previously offered slots to the writer so it can confirm the right one
-      writerFramework.availableSlots = `LEAD HAT AUSGEWÄHLT: "${message}"\nAngebotene Termine (aus letzter Agent-Nachricht): ${lastAgentBody.match(/\b(?:Montag|Dienstag|Mittwoch|Donnerstag|Freitag)\s+\d{1,2}:\d{2}\b/gi)?.join(' | ') || lastAgentBody}`;
-      writerFramework.hasCalendar = true;
-    }
-
-    // ── Fetch real calendar slots if booking action (and slots not already set above) ──────────────────────────
-    if (strategy.nextAction === 'book_call' && !writerFramework.availableSlots) {
+    // ── Fetch real calendar slots if booking action ──────────────────────────
+    if (strategy.nextAction === 'book_call') {
       const calResult = await fetchCalendarSlotsForWriter();
       writerFramework.availableSlots = calResult.formatted || undefined;
       writerFramework.hasCalendar = calResult.connected;
@@ -414,10 +305,9 @@ export async function POST(req: NextRequest) {
     const phase2 = await writeAndCheck(context, message, interpretation, strategy, {
       framework: writerFramework,
       temperature,
-      model: pipelineModel,
     });
 
-    // Ensure we always have a reply — but NOT for stop actions (empty is correct)
+    // Ensure we always have a reply
     let reply = phase2.finalMessage || '';
     if (!reply && phase2.handoffReason === 'API_CREDIT_ERROR') {
       return NextResponse.json({
@@ -425,60 +315,19 @@ export async function POST(req: NextRequest) {
         error: 'API_CREDIT_ERROR',
       }, { status: 200 });
     }
-    // IMPORTANT: stop action intentionally returns empty finalMessage — do NOT fallback
-    if (!reply && strategy.nextAction === 'stop') {
-      // Silent stop — return structured response with no reply text
-      return NextResponse.json({
-        reply: '',
-        intent: interpretation.microIntent,
-        sentiment: interpretation.emotionalTone,
-        confidence: 100,
-        nextAction: 'stop',
-        shouldHandoff: false,
-        reasoning: 'Gesprächsende — Lead hat abgelehnt oder Problem ist gelöst',
-        scores,
-        state: currentState,
-        interpretation,
-        strategy,
-        frameworkVersion: evolved?.version ?? 0,
-      });
-    }
     if (!reply) {
-      console.warn('[ROYA] Writer returned empty without stop intent — handoff. strategyAction:', strategy.nextAction, 'phase:', convPhase);
-      return NextResponse.json({
-        reply: '',
-        nextAction: 'handoff',
-        shouldHandoff: true,
-        handoffReason: 'Writer leer — manuelle Prüfung erforderlich',
-        debugStrategyAction: strategy.nextAction,
-        scores,
-        state: currentState,
-        frameworkVersion: evolved?.version ?? 0,
-      });
+      console.error('[ROYA] Writer returned empty after all model attempts. handoffReason:', phase2.handoffReason);
+      // Only use the name in the fallback if this is the very first agent reply.
+      // After the opener the name was already used — don't repeat it.
+      const agentTurnCount = history.filter(m => m.role === 'agent').length;
+      const firstName = leadName.split(' ')[0];
+      reply = agentTurnCount === 0
+        ? `Hey ${firstName}, kurze Frage: Was ist bei dir gerade das konkrete Thema?`
+        : `Kurze Frage: Was ist bei dir gerade das konkrete Thema?`;
     }
 
     // Track conversation event (non-blocking)
     const frameworkVersion = evolved?.version ?? 0;
-    const pipelineDurationMs = Date.now() - pipelineStartMs;
-
-    // ── Full turn trace for observability ─────────────────────────────────────
-    traceTurn({
-      conversationId: 'simulator',
-      turnNumber: leadTurns,
-      phase: convPhase,
-      leadMessage: message,
-      agentReply: reply,
-      nextAction: strategy.nextAction,
-      microIntent: interpretation.microIntent,
-      guardsTriggered: [],
-      rejectionCount: guards.rejectionCount,
-      diagnoseQCount: guards.diagnoseQuestionCount,
-      interpretation,
-      strategy,
-      durationMs: pipelineDurationMs,
-      model: pipelineModel,
-    });
-
     supabase.from('conversation_events').insert([{
       conversation_id: 'simulator',
       channel: 'sms',
@@ -511,7 +360,13 @@ export async function POST(req: NextRequest) {
         final_state: currentState,
         channel: 'sms',
         lead_name: leadName,
-      }]).then(() => {}, () => {});
+      }]).then(() => {
+        // After a real (non-simulator) terminal outcome, trigger auto-learning non-blocking.
+        // Simulator conversations have no messages in DB so they'll be skipped by the engine.
+        if (outcome === 'booked' || outcome === 'rejected') {
+          runAutoLearning({ limit: 5, minTurns: 3 }).catch(() => {});
+        }
+      }, () => {});
     }
 
     return NextResponse.json({
