@@ -22,12 +22,27 @@ import type { ChannelType } from "../channels";
 const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
 
 async function generateVariations(
-  stepType: string, leadName: string, channel: string, count = 2
+  stepType: string,
+  leadName: string,
+  channel: string,
+  count = 2,
+  campaignContext?: {
+    agentName?: string;
+    companyName?: string;
+    offer?: string;
+    valueProp?: string;
+    painPoint?: string;
+    noConvertReason?: string;
+    language?: string;
+  },
 ) {
   const res = await fetch(`${BASE_URL}/api/generate-message`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ stepType, leadName, channel, count }),
+    body: JSON.stringify({
+      stepType, leadName, channel, count,
+      ...(campaignContext ?? {}),
+    }),
   });
   if (!res.ok) return [];
   const { variations } = await res.json();
@@ -90,8 +105,17 @@ export async function handleSendMessage(job: Job<SendMessagePayload>): Promise<v
   let variationId = "template";
 
   if (!body) {
-    const winner     = await abStore.getWinnerForStep(campaignId, step.type);
-    const variations = await generateVariations(step.type, leadName, channel, winner ? 1 : 2);
+    const winner = await abStore.getWinnerForStep(campaignId, step.type);
+    const campaignContext = {
+      agentName:       campaign.aiFramework?.agentName,
+      companyName:     campaign.businessContext?.companyName,
+      offer:           campaign.businessContext?.offer,
+      valueProp:       campaign.businessContext?.valueProp,
+      painPoint:       campaign.businessContext?.painPoint,
+      noConvertReason: campaign.businessContext?.noConvertReason,
+      language:        campaign.aiFramework?.language ?? "de",
+    };
+    const variations = await generateVariations(step.type, leadName, channel, winner ? 1 : 2, campaignContext);
 
     if (!variations.length) throw new Error(`No variations generated for ${leadName}`);
 

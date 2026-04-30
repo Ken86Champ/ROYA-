@@ -150,6 +150,7 @@ export default function NewCampaignPage() {
   const [maxStep, setMaxStep] = useState<WizardStep>(1);
   const [dragging, setDragging] = useState(false);
   const [launching, setLaunching] = useState(false);
+  const [createdCampaignId, setCreatedCampaignId] = useState<string | null>(null);
   const [editingStep, setEditingStep] = useState<string | null>(null);
   const [clients, setClients] = useState<Client[]>([]);
 
@@ -348,7 +349,8 @@ export default function NewCampaignPage() {
       });
       const camp = await res.json();
       try { localStorage.removeItem('roya_new_campaign'); } catch { /* ignore */ }
-      router.push(`/dashboard/campaigns/${camp.id}/simulate`);
+      setCreatedCampaignId(camp.id);
+      setLaunching(false);
     } catch {
       setLaunching(false);
     }
@@ -999,6 +1001,17 @@ export default function NewCampaignPage() {
               </div>
             </div>
 
+            {/* Agent Setup CTA */}
+            <div className="glass-card p-5 border-violet-200 bg-gradient-to-br from-violet-50 to-white">
+              <div className="flex items-start gap-4">
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-violet-800">Vollständiges Agent Setup empfohlen</p>
+                  <p className="text-xs text-slate-500 mt-1">Nach dem Erstellen der Kampagne kannst du das vollständige Setup starten: 62 gezielte Fragen zu Zielgruppe, Einwänden, Tonalität und Eskalation. Damit hält sich der Agent zuverlässig an alle Regeln.</p>
+                  <p className="text-[11px] text-violet-500 mt-2 font-medium">→ Erscheint automatisch nach dem Erstellen der Kampagne</p>
+                </div>
+              </div>
+            </div>
+
             <div className="flex gap-3">
               <button onClick={() => setStep(4)} className="flex-1 btn-secondary py-2.5 text-sm">← Zurück</button>
               <button onClick={() => goToStep(6)} className="flex-1 btn-primary py-2.5 text-sm">Weiter → Framework</button>
@@ -1054,6 +1067,61 @@ export default function NewCampaignPage() {
 
                 {frameworkExpanded && (
                   <div className="mt-4 space-y-4">
+
+                    {/* ── Gesprächs-Blueprint (visual) ── */}
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-2 block">Gesprächs-Blueprint — Ablauf</label>
+                      <div className="space-y-2">
+                        {[
+                          { phase: "1", label: "Opener", color: "violet", desc: "Neutral einsteigen. Vorstellen, früheren Kontakt erwähnen, fragen ob Thema noch aktuell.", example: "Hallo Andrea, hier ist Lena von 10x PT. Wir hatten vor einer Weile Kontakt wegen dem Coaching. Ist das noch relevant?" },
+                          { phase: "2", label: "Qualifizierung", color: "blue", desc: "Konkretes Ziel erfragen. Optionen anbieten damit Lead leichter antwortet.", example: "Was ist aktuell dein Ziel?" },
+                          { phase: "3a", label: "Diagnose — Einordnen", color: "indigo", desc: "Ziel spiegeln. Muster zeigen. Normalisieren: 'Das hören wir oft von Menschen, die...'", example: "Das hören wir oft von Menschen, die grundsätzlich motiviert sind, aber irgendwann den roten Faden verlieren." },
+                          { phase: "3b", label: "Diagnose — Alleine oder Unterstützung?", color: "amber", desc: "PFLICHT-FRAGE zuerst: Klärt ob fehlendes System oder falsche Methode das Problem ist.", example: "Wie war das bisher: Hast du es eher alleine versucht oder hattest du schon mal Unterstützung?" },
+                          { phase: "3c", label: "Diagnose — Scheiterpunkt", color: "orange", desc: "Was konkret hat nicht funktioniert? Nur nach Antwort auf 3b stellen.", example: "Was war bei dir der Punkt, an dem es meistens gescheitert ist — fehlender Plan, Zeit oder Motivation?" },
+                          { phase: "4", label: "Reframe + Bridge + Buy-In", color: "emerald", desc: "Problem liegt nie bei der Person — immer am fehlenden System. Dann: Interesse prüfen BEVOR Termin.", example: "Konsistenz geht nicht verloren wegen Disziplin, sondern weil ein System fehlt. Klingt das grundsätzlich interessant für dich?" },
+                          { phase: "5", label: "Termin (CTA)", color: "teal", desc: "NUR nach 'Ja' auf Buy-In. Erst vormittags/nachmittags, dann 3 konkrete Slots.", example: "Passt dir eher vormittags oder nachmittags?" },
+                          { phase: "6", label: "Abschluss", color: "slate", desc: "Termin kurz bestätigen. Sauber, kein Overhead. Danach kein weiterer Turn.", example: "Perfekt, ich trage dich für Dienstag um 9 ein. Ich rufe dich dann an." },
+                        ].map(step => (
+                          <div key={step.phase} className={`flex gap-3 p-3 rounded-xl border ${
+                            step.color === 'violet' ? 'bg-violet-50 border-violet-100' :
+                            step.color === 'blue'   ? 'bg-blue-50 border-blue-100' :
+                            step.color === 'indigo' ? 'bg-indigo-50 border-indigo-100' :
+                            step.color === 'amber'  ? 'bg-amber-50 border-amber-200' :
+                            step.color === 'orange' ? 'bg-orange-50 border-orange-100' :
+                            step.color === 'emerald'? 'bg-emerald-50 border-emerald-100' :
+                            step.color === 'teal'   ? 'bg-teal-50 border-teal-100' :
+                            'bg-slate-50 border-slate-200'
+                          }`}>
+                            <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-[11px] font-bold shrink-0 ${
+                              step.color === 'violet' ? 'bg-violet-600 text-white' :
+                              step.color === 'blue'   ? 'bg-blue-600 text-white' :
+                              step.color === 'indigo' ? 'bg-indigo-600 text-white' :
+                              step.color === 'amber'  ? 'bg-amber-500 text-white' :
+                              step.color === 'orange' ? 'bg-orange-500 text-white' :
+                              step.color === 'emerald'? 'bg-emerald-600 text-white' :
+                              step.color === 'teal'   ? 'bg-teal-600 text-white' :
+                              'bg-slate-500 text-white'
+                            }`}>{step.phase}</div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-semibold text-slate-800">{step.label}</p>
+                              <p className="text-[11px] text-slate-500 mt-0.5">{step.desc}</p>
+                              <p className="text-[11px] text-slate-400 italic mt-1 truncate">„{step.example}"</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-3 p-3 rounded-xl bg-slate-800 text-white">
+                        <p className="text-[11px] font-semibold text-slate-300 mb-1">Kommunikations-Formel (gilt für JEDE Nachricht nach dem Opener)</p>
+                        <div className="flex items-center gap-2">
+                          <span className="px-2 py-1 rounded-md bg-violet-600 text-[10px] font-bold">EINORDNEN</span>
+                          <span className="text-slate-500 text-xs">→</span>
+                          <span className="px-2 py-1 rounded-md bg-emerald-700 text-[10px] font-bold">BEDARF WECKEN</span>
+                          <span className="text-slate-500 text-xs">→</span>
+                          <span className="px-2 py-1 rounded-md bg-amber-600 text-[10px] font-bold">FÜHREN</span>
+                        </div>
+                      </div>
+                    </div>
+
                     {/* Temperature */}
                     <div>
                       <label className="text-xs font-medium text-slate-500 mb-1 block">Kreativität (Temperature)</label>
@@ -1093,34 +1161,10 @@ export default function NewCampaignPage() {
                       </div>
                     )}
 
-                    {/* Writer instructions */}
-                    <div>
-                      <label className="text-xs font-medium text-slate-500 mb-1 block">Writer-Anweisungen</label>
-                      <div className="bg-slate-50 rounded-xl p-3 text-xs text-slate-600 whitespace-pre-wrap max-h-32 overflow-y-auto">
-                        {selected.writerInstructions || "—"}
-                      </div>
-                    </div>
-
-                    {/* Strategist instructions */}
-                    <div>
-                      <label className="text-xs font-medium text-slate-500 mb-1 block">Strategist-Anweisungen</label>
-                      <div className="bg-slate-50 rounded-xl p-3 text-xs text-slate-600 whitespace-pre-wrap max-h-32 overflow-y-auto">
-                        {selected.strategistInstructions || "—"}
-                      </div>
-                    </div>
-
-                    {/* Interpreter instructions */}
-                    <div>
-                      <label className="text-xs font-medium text-slate-500 mb-1 block">Interpreter-Anweisungen</label>
-                      <div className="bg-slate-50 rounded-xl p-3 text-xs text-slate-600 whitespace-pre-wrap max-h-32 overflow-y-auto">
-                        {selected.interpreterInstructions || "—"}
-                      </div>
-                    </div>
-
                     {/* Example messages */}
                     {selected.exampleMessages.length > 0 && (
                       <div>
-                        <label className="text-xs font-medium text-slate-500 mb-1 block">Beispiel-Nachrichten</label>
+                        <label className="text-xs font-medium text-slate-500 mb-1 block">Referenz-Verlauf (Beispiel-Nachrichten)</label>
                         <div className="space-y-2">
                           {selected.exampleMessages.map((ex, i) => (
                             <div key={i} className="bg-slate-50 rounded-xl p-3 text-xs">
@@ -1131,6 +1175,33 @@ export default function NewCampaignPage() {
                         </div>
                       </div>
                     )}
+
+                    {/* Raw instructions (collapsed by default) */}
+                    <details className="group">
+                      <summary className="text-xs font-medium text-slate-400 cursor-pointer hover:text-slate-600 list-none flex items-center gap-1">
+                        <span className="group-open:rotate-90 transition-transform inline-block">▶</span> Raw-Anweisungen (Writer / Strategist / Interpreter)
+                      </summary>
+                      <div className="mt-3 space-y-3">
+                        <div>
+                          <label className="text-xs font-medium text-slate-500 mb-1 block">Writer-Anweisungen</label>
+                          <div className="bg-slate-50 rounded-xl p-3 text-xs text-slate-600 whitespace-pre-wrap max-h-32 overflow-y-auto">
+                            {selected.writerInstructions || "—"}
+                          </div>
+                        </div>
+                        <div>
+                          <label className="text-xs font-medium text-slate-500 mb-1 block">Strategist-Anweisungen</label>
+                          <div className="bg-slate-50 rounded-xl p-3 text-xs text-slate-600 whitespace-pre-wrap max-h-32 overflow-y-auto">
+                            {selected.strategistInstructions || "—"}
+                          </div>
+                        </div>
+                        <div>
+                          <label className="text-xs font-medium text-slate-500 mb-1 block">Interpreter-Anweisungen</label>
+                          <div className="bg-slate-50 rounded-xl p-3 text-xs text-slate-600 whitespace-pre-wrap max-h-32 overflow-y-auto">
+                            {selected.interpreterInstructions || "—"}
+                          </div>
+                        </div>
+                      </div>
+                    </details>
                   </div>
                 )}
               </div>
@@ -1344,15 +1415,36 @@ export default function NewCampaignPage() {
               <span className="font-semibold">Gespräche</span>.
             </p>
           </div>
-          <div className="flex gap-3">
-            <button onClick={() => setStep(7)} disabled={launching} className="flex-1 btn-secondary py-2.5 text-sm disabled:opacity-40">← Zurück</button>
-            <button onClick={handleLaunch} disabled={launching}
-              className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all text-white ${
-                launching ? "bg-emerald-500" : "bg-emerald-600 hover:bg-emerald-500"
-              }`}>
-              {launching ? "Wird erstellt…" : "Weiter → Simulation"}
-            </button>
-          </div>
+          {createdCampaignId ? (
+            <div className="space-y-3">
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3">
+                <p className="text-emerald-700 text-sm font-semibold">Kampagne erstellt ✓</p>
+                <p className="text-emerald-600 text-xs mt-0.5">Wähle deinen nächsten Schritt:</p>
+              </div>
+              <button
+                onClick={() => router.push(`/dashboard/setup?campaignId=${createdCampaignId}`)}
+                className="w-full py-3 rounded-xl text-sm font-semibold bg-violet-600 hover:bg-violet-500 text-white transition-all flex items-center justify-center gap-2"
+              >
+                Vollständiges Agent Setup starten → <span className="text-xs font-normal opacity-80">(empfohlen)</span>
+              </button>
+              <button
+                onClick={() => router.push(`/dashboard/campaigns/${createdCampaignId}/simulate`)}
+                className="w-full py-2.5 rounded-xl text-sm font-medium border border-slate-200 text-slate-600 hover:border-violet-300 hover:text-violet-600 transition-all"
+              >
+                Direkt zur Simulation
+              </button>
+            </div>
+          ) : (
+            <div className="flex gap-3">
+              <button onClick={() => setStep(7)} disabled={launching} className="flex-1 btn-secondary py-2.5 text-sm disabled:opacity-40">← Zurück</button>
+              <button onClick={handleLaunch} disabled={launching}
+                className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all text-white ${
+                  launching ? "bg-emerald-500" : "bg-emerald-600 hover:bg-emerald-500"
+                }`}>
+                {launching ? "Wird erstellt…" : "Kampagne erstellen"}
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

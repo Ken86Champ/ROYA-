@@ -11,6 +11,7 @@ import { writeAndCheck } from '@/lib/ai/writer';
 import { DEFAULT_PERSONA } from '@/lib/types/conversation';
 import { SYSTEM_FRAMEWORKS } from '@/lib/framework-store';
 import { loadEvolvedFramework } from '@/lib/framework-evolution';
+import { runAutoLearning } from '@/lib/auto-learning';
 import { supabase } from '@/lib/supabase';
 import { fetchCalendarSlotsForWriter } from '@/lib/calendar-slots';
 import type {
@@ -139,27 +140,50 @@ export async function POST(req: NextRequest) {
     // ── Build framework options from dedicated framework field, evolved framework, or ROYA Standard fallback ──
     const royaStandard = SYSTEM_FRAMEWORKS[0]; // ROYA Standard is always last resort
     const evolved = await loadEvolvedFramework();
-    const fw = framework && framework.writerInstructions
-      ? framework
-      : evolved
-        ? {
-            writerInstructions: evolved.writerInstructions,
-            strategistInstructions: evolved.strategistInstructions,
-            interpreterInstructions: evolved.interpreterInstructions,
-            rules: evolved.rules,
-            forbiddenPhrases: evolved.forbiddenPhrases,
-            temperature: evolved.temperature,
-            exampleMessages: evolved.exampleMessages,
-          }
-        : {
-            writerInstructions: royaStandard.writerInstructions,
-            strategistInstructions: royaStandard.strategistInstructions,
-            interpreterInstructions: royaStandard.interpreterInstructions,
-            rules: royaStandard.rules,
-            forbiddenPhrases: royaStandard.forbiddenPhrases,
-            temperature: royaStandard.temperature,
-            exampleMessages: royaStandard.exampleMessages,
-          };
+
+    // Bug 3 Fix: Validate evolved framework before using it — must have all 3 core prompts
+    const evolvedIsValid = evolved &&
+      evolved.writerInstructions && evolved.writerInstructions.length > 100 &&
+      evolved.strategistInstructions && evolved.strategistInstructions.length > 100 &&
+      evolved.interpreterInstructions && evolved.interpreterInstructions.length > 50;
+    if (evolved && !evolvedIsValid) {
+      console.warn('[ROYA] Evolved framework invalid/incomplete — falling back to ROYA Standard');
+    }
+
+    // Evolved framework with learnings ALWAYS wins — it contains the user's trained conversation style.
+    // Client-passed framework only applies when no trained evolved framework exists yet.
+    const evolvedHasLearnings = evolvedIsValid && (evolved?.learningsUsed ?? 0) > 0;
+    const fw = evolvedHasLearnings
+      ? {
+          writerInstructions: evolved!.writerInstructions,
+          strategistInstructions: evolved!.strategistInstructions,
+          interpreterInstructions: evolved!.interpreterInstructions,
+          rules: evolved!.rules,
+          forbiddenPhrases: evolved!.forbiddenPhrases,
+          temperature: evolved!.temperature,
+          exampleMessages: evolved!.exampleMessages,
+        }
+      : framework && framework.writerInstructions
+        ? framework
+        : evolvedIsValid
+          ? {
+              writerInstructions: evolved!.writerInstructions,
+              strategistInstructions: evolved!.strategistInstructions,
+              interpreterInstructions: evolved!.interpreterInstructions,
+              rules: evolved!.rules,
+              forbiddenPhrases: evolved!.forbiddenPhrases,
+              temperature: evolved!.temperature,
+              exampleMessages: evolved!.exampleMessages,
+            }
+          : {
+              writerInstructions: royaStandard.writerInstructions,
+              strategistInstructions: royaStandard.strategistInstructions,
+              interpreterInstructions: royaStandard.interpreterInstructions,
+              rules: royaStandard.rules,
+              forbiddenPhrases: royaStandard.forbiddenPhrases,
+              temperature: royaStandard.temperature,
+              exampleMessages: royaStandard.exampleMessages,
+            };
     const bizAny = business as unknown as Record<string, unknown> | undefined;
     const rules = fw.rules ?? (bizAny?.rules as string[] | undefined) ?? [];
     const forbiddenPhrases = fw.forbiddenPhrases ?? [];
@@ -194,6 +218,37 @@ export async function POST(req: NextRequest) {
     const currentState = deriveState(scores, leadTurns);
     const memory = buildMemoryFromHistory(history);
 
+    // ── DETERMINISTIC GOODBYE GUARD — runs before any LLM ──────────────────
+    // If the agent's last message was a goodbye/close and the lead confirms
+    // with a short acknowledgment → conversation is OVER. No reply.
+    const AGENT_GOODBYE_PATTERNS = /melde dich|wenn sich das ändert|wenn sich etwas ändert|viel erfolg|alles gute|bis dann|tschüss|ciao|auf wiedersehen|take care|bis bald|gerne wieder|falls du doch|falls sich das|falls was ist/i;
+    const LEAD_ACK_PATTERNS = /^(ok|okay|alles klar|danke|thx|thanks|gut|super|verstanden|👍|👌|passt|kk|klar|oki|k\.)\.?$/i;
+
+    const lastAgentMsg = [...history].reverse().find(m => m.role === 'agent');
+    const lastLeadMsg = message.trim();
+
+    if (
+      lastAgentMsg &&
+      AGENT_GOODBYE_PATTERNS.test(lastAgentMsg.body) &&
+      LEAD_ACK_PATTERNS.test(lastLeadMsg)
+    ) {
+      // Conversation is closed — return empty stop, no reply
+      return NextResponse.json({ reply: '', action: 'stop' }, { status: 200 });
+    }
+
+    // ── HARD REJECTION GUARD — lead already rejected, agent said goodbye ──
+    // If agent sent a goodbye AND lead says anything short/neutral → still stop
+    const HARD_REJECTION_PATTERNS = /kein interesse|nicht aktuell|kein bedarf|bin bedient|lass mich in ruhe|hör auf|stop|unsubscribe|irisch und selbstständig|selbstständig.*danke|bin versorgt/i;
+    const agentMsgs = history.filter(m => m.role === 'agent');
+    const leadMsgs = history.filter(m => m.role === 'lead');
+
+    // Check if lead previously rejected AND agent already responded to that rejection
+    const leadHardRejected = leadMsgs.some(m => HARD_REJECTION_PATTERNS.test(m.body));
+    const agentAlreadySaidGoodbye = agentMsgs.some(m => AGENT_GOODBYE_PATTERNS.test(m.body));
+    if (leadHardRejected && agentAlreadySaidGoodbye) {
+      return NextResponse.json({ reply: '', action: 'stop' }, { status: 200 });
+    }
+
     // Build minimal context for simulator (no DB needed)
     const historyMessages: HistoryMessage[] = history.map(m => ({
       role: m.role,
@@ -222,6 +277,24 @@ export async function POST(req: NextRequest) {
       temperature: 0.3,
     });
 
+    // ── Bug 2 Fix: Deterministischer Preis-Guard für Opener-Phase ─────────────
+    // Turn 0 oder 1: Lead fragt nach Preis → NIEMALS nennen, erst Situation verstehen
+    const isPriceQuestion = interpretation.microIntent === 'asking_price' ||
+      /was kostet|wie viel|preis|kosten|gebühr|tarif|was zahlt|how much|price/i.test(message);
+    if (isPriceQuestion && leadTurns <= 1) {
+      strategy.nextAction = 'ask_question';
+      strategy.primaryGoal = 'Erst Situation und Ziel verstehen, bevor Preis besprochen wird';
+      strategy.angle = 'Konkretes Ziel oder aktuelles Problem des Leads erfragen';
+      strategy.desiredTone = 'neugierig-warm';
+      strategy.thingsToAvoid = ['Preis nennen', 'Konditionen erwähnen', 'Pakete beschreiben', 'Kosten erwähnen', 'Preisspanne nennen'];
+      // Inject a mandatory instruction directly into writer prompt
+      writerFramework.writerInstructions = (writerFramework.writerInstructions || royaStandard.writerInstructions) +
+        '\n\n── PFLICHT-REGEL — PREIS IM OPENER ──\n' +
+        'Die Person fragt nach dem Preis, aber du kennst ihre Situation noch nicht.\n' +
+        'Antworte EXAKT so (oder sinngemäß): "Erstmal gar nichts. Wir schauen uns in Ruhe an, ob und wie wir dir helfen können. Alles Weitere klären wir dann persönlich. Was ist dein konkretes Ziel?"\n' +
+        'Nenne KEINEN Preis, KEINE Preisspanne, KEINE Pakete. Leite die Frage SOFORT auf das Ziel des Leads um.';
+    }
+
     // ── Fetch real calendar slots if booking action ──────────────────────────
     if (strategy.nextAction === 'book_call') {
       const calResult = await fetchCalendarSlotsForWriter();
@@ -243,8 +316,14 @@ export async function POST(req: NextRequest) {
       }, { status: 200 });
     }
     if (!reply) {
-      console.warn('[ROYA] Writer returned empty — using fallback generation');
-      reply = `Danke für deine Nachricht! Lass mich da kurz schauen und melde mich gleich.`;
+      console.error('[ROYA] Writer returned empty after all model attempts. handoffReason:', phase2.handoffReason);
+      // Only use the name in the fallback if this is the very first agent reply.
+      // After the opener the name was already used — don't repeat it.
+      const agentTurnCount = history.filter(m => m.role === 'agent').length;
+      const firstName = leadName.split(' ')[0];
+      reply = agentTurnCount === 0
+        ? `Hey ${firstName}, kurze Frage: Was ist bei dir gerade das konkrete Thema?`
+        : `Kurze Frage: Was ist bei dir gerade das konkrete Thema?`;
     }
 
     // Track conversation event (non-blocking)
@@ -281,7 +360,13 @@ export async function POST(req: NextRequest) {
         final_state: currentState,
         channel: 'sms',
         lead_name: leadName,
-      }]).then(() => {}, () => {});
+      }]).then(() => {
+        // After a real (non-simulator) terminal outcome, trigger auto-learning non-blocking.
+        // Simulator conversations have no messages in DB so they'll be skipped by the engine.
+        if (outcome === 'booked' || outcome === 'rejected') {
+          runAutoLearning({ limit: 5, minTurns: 3 }).catch(() => {});
+        }
+      }, () => {});
     }
 
     return NextResponse.json({

@@ -269,11 +269,14 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
           setReferenceDoc(c.aiFramework.referenceDoc);
           setReferenceFileName("Gespeicherte Vorlage");
         }
-        // Load the campaign's prompt framework if linked
+        // Only load campaign-linked frameworks — the server's evolved framework (with all learnings) handles the rest.
+        // Sending the ROYA Standard from the client would bypass the evolved framework.
         if (c.aiFramework?.frameworkId) {
           fetch(`/api/frameworks/${c.aiFramework.frameworkId}`)
             .then(r => r.ok ? r.json() : null)
-            .then(fw => { if (fw) setActiveFramework(fw); })
+            .then(data => {
+              if (data && data.writerInstructions) setActiveFramework(data);
+            })
             .catch(() => {});
         }
       })
@@ -413,6 +416,8 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
             }),
           });
           const aiData = await aiRes.json();
+          // action='stop' means conversation is over — no reply
+          if (aiData.action === 'stop') { syncTyping(false); return; }
           const reply = aiData.reply || "";
           const isError = aiData.error === 'API_CREDIT_ERROR' || reply.includes('⚠');
 
@@ -612,6 +617,10 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
       });
       const data = await res.json();
       syncTyping(false);
+      // action='stop' means conversation is over — no reply, don't add empty message
+      if (data.action === 'stop' || (!data.reply && !data.error)) {
+        return;
+      }
       const reply = data.reply || data.error || "⚠ Keine Antwort erhalten.";
       const followupIdx = (campaign.flow ?? []).findIndex(s => s.type === "followup");
       addMsg("agent", reply, followupIdx >= 0 ? followupIdx : 1);
@@ -951,7 +960,12 @@ export default function CampaignSimulatePage({ params }: { params: Promise<{ id:
                   setReferenceDoc(text.slice(0, 15000));
                   setReferenceFileName(file.name);
                   if (data.frameworkVersion) setFrameworkVersion(data.frameworkVersion);
+                  // Clear any cached framework so the server's newly evolved framework is used
+                  setActiveFramework(null);
                   done++;
+                  if (data.evolutionWarning) {
+                    lastError = `⚠ ${file.name}: ${data.evolutionWarning}`;
+                  }
                 } else {
                   lastError = `⚠ ${file.name}: ${data.error || 'Fehler'}`;
                 }

@@ -136,12 +136,12 @@ export async function runAutoLearning(options?: {
   const limit = options?.limit ?? 10;
   const minTurns = options?.minTurns ?? 3;
 
-  // 1. Fetch outcomes that haven't been analyzed yet
-  //    (outcomes not in auto_learnings.source_id)
+  // 1. Fetch outcomes that haven't been analyzed yet.
+  //    Include 'ghosted' — silent leads reveal tone/friction issues.
   const { data: outcomes } = await supabase
     .from('conversation_outcomes')
     .select('*')
-    .in('outcome', ['booked', 'rejected', 'handed_off'])
+    .in('outcome', ['booked', 'rejected', 'handed_off', 'ghosted'])
     .gte('turns_count', minTurns)
     .order('created_at', { ascending: false })
     .limit(limit);
@@ -217,8 +217,8 @@ export async function runAutoLearning(options?: {
   let triggeredEvolution = false;
   let newFrameworkVersion: number | undefined;
 
-  // Auto-evolve when 5+ unapplied insights accumulate
-  if (unappliedCount >= 5) {
+  // Auto-evolve when 2+ unapplied insights accumulate — faster learning cycle
+  if (unappliedCount >= 2) {
     try {
       const evolved = await triggerAutoEvolution();
       if (evolved) {
